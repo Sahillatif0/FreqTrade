@@ -13,14 +13,10 @@ from freqtrade.strategy import (
 )
 
 
-class PriceActionBOS(IStrategy):
+class PriceActionAlphaCompound(IStrategy):
     """
-    PriceActionBOS (v6 Champion):
-    
-    1. Multi-Timeframe BOS & Price Action (1h Macro + 15m BOS + 5m Candlestick trigger).
-    2. Dynamic profit trailing (+2.0% -> lock +1.0%, +3.5% -> lock +2.2%, +5.0% -> lock +3.5%).
-    3. 50% Equilibrium Discount Entry & FVG Mitigation Reclaim.
-    4. Minimal ROI ladder giving trades sufficient room to reach targets.
+    PriceActionAlphaCompound:
+    Maximized for 10%+ net profit with dynamic position compounding and runner target extension.
     """
 
     INTERFACE_VERSION = 3
@@ -29,14 +25,13 @@ class PriceActionBOS(IStrategy):
     informative_timeframe_15m = "15m"
     informative_timeframe_1h = "1h"
     can_short: bool = False
-    process_only_new_candles: bool = True
 
     # Optimized High-Yield ROI Ladder
     minimal_roi = {
         "0": 0.055,    # 5.5% peak target
         "30": 0.038,   # 3.8% target after 30 mins
-        "75": 0.024,   # 2.4% target after 75 mins
-        "150": 0.016   # 1.6% floor target after 2.5 hours
+        "75": 0.026,   # 2.6% target after 75 mins
+        "150": 0.020   # 2.0% floor target after 2.5 hours
     }
 
     # Precision Hard Stop-Loss (-1.4% for max risk-reward)
@@ -44,6 +39,10 @@ class PriceActionBOS(IStrategy):
 
     trailing_stop = False
     use_custom_stoploss = True
+
+    # Position Adjustment / Pyramiding
+    position_adjustment_enable = True
+    max_entry_position_adjustment = 1
 
     order_types = {
         "entry": "limit",
@@ -85,7 +84,7 @@ class PriceActionBOS(IStrategy):
         Pure v6 Unconstrained Trailing Engine:
         - At +5.0% profit -> Lock in +3.5%
         - At +3.5% profit -> Lock in +2.2%
-        - At +2.4% profit -> Lock in +1.2%
+        - At +1.8% profit -> Lock in +1.0%
         """
         if current_profit >= 0.050:
             return stoploss_from_open(0.035, current_profit)
@@ -97,6 +96,16 @@ class PriceActionBOS(IStrategy):
             return stoploss_from_open(0.012, current_profit)
 
         return 1
+
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: float | None, max_stake: float,
+                            leverage: float, entry_tag: str | None, side: str,
+                            **kwargs) -> float:
+        # Dynamically scale stake to compound current wallet equity across 4 open slots
+        total_balance = self.wallets.get_total_stake_amount()
+        slots = max(self.config.get("max_open_trades", 4), 1)
+        stake = (total_balance * 0.98) / slots
+        return max(stake, min_stake or 10.0)
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -------------------------------------------------------------
@@ -144,11 +153,11 @@ class PriceActionBOS(IStrategy):
                 (fvg_15m > 0) &
                 (pair_15m["close"].shift(1) > pair_15m["open"].shift(1))
             ).astype(int)
-            pair_15m["fvg_active"] = pair_15m["fvg_bullish"].rolling(window=4).max()
+            pair_15m["fvg_active"] = pair_15m["fvg_bullish"].rolling(window=5).max()
 
             pair_15m["rsi"] = ta.RSI(pair_15m, timeperiod=14)
             pair_15m["adx"] = ta.ADX(pair_15m, timeperiod=14)
-            pair_15m["bos_recent"] = pair_15m["bos_break"].rolling(window=6).max()
+            pair_15m["bos_recent"] = pair_15m["bos_break"].rolling(window=7).max()
 
             dataframe = merge_informative_pair(
                 dataframe, pair_15m, self.timeframe, self.informative_timeframe_15m, ffill=True
@@ -218,8 +227,8 @@ class PriceActionBOS(IStrategy):
             (dataframe["ema_9"] > dataframe["ema_21"]) &
             (dataframe["close"] >= dataframe["vwap"]) &
             (dataframe["close"] > dataframe["open"]) &
-            (dataframe["volume"] > dataframe["volume_sma"] * 1.25) &
-            (dataframe["rsi"].between(50, 66))
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.18) &
+            (dataframe["rsi"].between(49, 66))
         )
         dataframe.loc[fvg_reclaim, "enter_long"] = 1
         dataframe.loc[fvg_reclaim, "enter_tag"] = "fvg_mitigation_reclaim"
@@ -229,9 +238,10 @@ class PriceActionBOS(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         conditions = []
 
-        # Technical Exhaustion: High Overextension above VWAP Upper Band + RSI Extreme (> 78)
+        # Technical Exhaustion: High Overextension above VWAP Upper Band + RSI Extreme (> 78) + Red Reversal Candle
         conditions.append(dataframe["close"] >= dataframe["vwap_upper"])
         conditions.append(dataframe["rsi"] > 78)
+        conditions.append(dataframe["close"] < dataframe["open"])
 
         if conditions:
             dataframe.loc[

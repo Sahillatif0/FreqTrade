@@ -13,9 +13,9 @@ from freqtrade.strategy import (
 )
 
 
-class PriceActionBOS(IStrategy):
+class PriceActionScalpMax5m(IStrategy):
     """
-    PriceActionBOS (v6 Champion):
+    PriceActionScalpMax5m:
     
     1. Multi-Timeframe BOS & Price Action (1h Macro + 15m BOS + 5m Candlestick trigger).
     2. Dynamic profit trailing (+2.0% -> lock +1.0%, +3.5% -> lock +2.2%, +5.0% -> lock +3.5%).
@@ -29,7 +29,6 @@ class PriceActionBOS(IStrategy):
     informative_timeframe_15m = "15m"
     informative_timeframe_1h = "1h"
     can_short: bool = False
-    process_only_new_candles: bool = True
 
     # Optimized High-Yield ROI Ladder
     minimal_roi = {
@@ -85,7 +84,7 @@ class PriceActionBOS(IStrategy):
         Pure v6 Unconstrained Trailing Engine:
         - At +5.0% profit -> Lock in +3.5%
         - At +3.5% profit -> Lock in +2.2%
-        - At +2.4% profit -> Lock in +1.2%
+        - At +1.8% profit -> Lock in +1.0%
         """
         if current_profit >= 0.050:
             return stoploss_from_open(0.035, current_profit)
@@ -207,9 +206,7 @@ class PriceActionBOS(IStrategy):
 
         base_context = trend_aligned & bos_confirmed & adx_15m & session_ok
 
-        # -------------------------------------------------------------
-        # Institutional FVG Mitigation + Trend Reclaim (The Winning Core)
-        # -------------------------------------------------------------
+        # Setup 1: Institutional FVG Mitigation + Trend Reclaim (The Winning Core)
         fvg_mitigated = dataframe.get("fvg_active_15m", pd.Series(True, index=dataframe.index)) == 1
         fvg_reclaim = (
             base_context &
@@ -218,11 +215,41 @@ class PriceActionBOS(IStrategy):
             (dataframe["ema_9"] > dataframe["ema_21"]) &
             (dataframe["close"] >= dataframe["vwap"]) &
             (dataframe["close"] > dataframe["open"]) &
-            (dataframe["volume"] > dataframe["volume_sma"] * 1.25) &
-            (dataframe["rsi"].between(50, 66))
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.15) &
+            (dataframe["rsi"].between(48, 66))
         )
         dataframe.loc[fvg_reclaim, "enter_long"] = 1
-        dataframe.loc[fvg_reclaim, "enter_tag"] = "fvg_mitigation_reclaim"
+        dataframe.loc[fvg_reclaim, "enter_tag"] = "fvg_reclaim"
+
+        # Setup 2: EMA 21 Pullback Reclaim in Confirmed 15m BOS Bull
+        ema_pullback = (
+            base_context &
+            (dataframe["low"].shift(1) <= dataframe["ema_21"].shift(1)) &
+            (dataframe["close"] > dataframe["ema_9"]) &
+            (dataframe["ema_9"] > dataframe["ema_21"]) &
+            (dataframe["close"] >= dataframe["vwap"]) &
+            (dataframe["close"] > dataframe["open"]) &
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.25) &
+            (dataframe["rsi"].between(50, 65))
+        )
+        dataframe.loc[ema_pullback, "enter_long"] = 1
+        dataframe.loc[ema_pullback, "enter_tag"] = "ema_pullback"
+
+        # Setup 3: Institutional VWAP Sweep Reclaim with Micro MSS
+        swept_below_vwap = dataframe["low"].rolling(window=3).min() < dataframe["vwap"]
+        closed_above_vwap = dataframe["close"] > dataframe["vwap"]
+        micro_mss = dataframe["close"] > dataframe["high"].shift(1)
+        vwap_reclaim = (
+            base_context &
+            swept_below_vwap &
+            closed_above_vwap &
+            micro_mss &
+            (dataframe["close"] > dataframe["open"]) &
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.20) &
+            (dataframe["rsi"].between(45, 62))
+        )
+        dataframe.loc[vwap_reclaim, "enter_long"] = 1
+        dataframe.loc[vwap_reclaim, "enter_tag"] = "vwap_reclaim"
 
         return dataframe
 
