@@ -9,6 +9,23 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
+
+function fetchHttpsJson(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        }).on('error', reject);
+    });
+}
 
 const app = express();
 app.use(express.json());
@@ -102,6 +119,66 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null) {
     });
 }
 
+// Generate full daily morning digest
+async function generateDailyDigest() {
+    try {
+        const [profit, balance, status, fng, btcTicker] = await Promise.all([
+            callFreqtradeApi('/profit').catch(() => ({})),
+            callFreqtradeApi('/balance').catch(() => ({})),
+            callFreqtradeApi('/status').catch(() => ([])),
+            fetchHttpsJson('https://api.alternative.me/fng/?limit=1').catch(() => null),
+            fetchHttpsJson('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT').catch(() => null)
+        ]);
+
+        const totalEquity = balance.total ? balance.total.toFixed(2) : 'N/A';
+        const pkrVal = balance.value ? Number(balance.value).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
+        const winRate = profit.winrate !== undefined ? (profit.winrate * 100).toFixed(1) : (((profit.winning_trades || 0) / ((profit.closed_trade_count || 1))) * 100).toFixed(1);
+        const closedProfit = profit.profit_closed_coin?.toFixed(2) || '0.00';
+        const openCount = Array.isArray(status) ? status.length : 0;
+
+        const fngVal = fng?.data?.[0]?.value || 'N/A';
+        const fngClass = fng?.data?.[0]?.value_classification || 'Neutral';
+        const btcPrice = btcTicker?.lastPrice ? parseFloat(btcTicker.lastPrice).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
+        const btcChange = btcTicker?.priceChangePercent ? parseFloat(btcTicker.priceChangePercent).toFixed(2) : '0.00';
+
+        return `🌅 *DAILY TRADING DIGEST*\n` +
+               `────────────────────\n` +
+               `💰 *Closed PnL:* ${closedProfit} USDT\n` +
+               `🏆 *Win Rate:* ${winRate}% (${profit.winning_trades || 0}W / ${profit.losing_trades || 0}L)\n` +
+               `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
+               `📊 *Open Trades:* ${openCount} / 1\n` +
+               `🪙 *Bitcoin:* $${btcPrice} (${btcChange >= 0 ? '+' : ''}${btcChange}%)\n` +
+               `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
+               `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
+               `────────────────────\n` +
+               `_HighFrequencySweepElite active & scanning!_ 🚀`;
+    } catch (e) {
+        return `⚠️ Could not compile daily digest: ${e.message}`;
+    }
+}
+
+// Check every minute if it's 09:00 AM PKT (UTC+5) to send the morning digest
+let lastDigestDate = '';
+function checkMorningDigest() {
+    try {
+        const now = new Date();
+        const karachiHour = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Karachi', hour: 'numeric', hour12: false }));
+        const karachiMinute = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Karachi', minute: 'numeric' }));
+        const todayStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Karachi' });
+
+        if (karachiHour === 9 && karachiMinute === 0 && lastDigestDate !== todayStr && TARGET_JID && sock && isConnected) {
+            lastDigestDate = todayStr;
+            generateDailyDigest().then(msg => {
+                sock.sendMessage(TARGET_JID, { text: msg });
+                console.log('Automated 9:00 AM PKT Daily Digest sent to', TARGET_JID);
+            }).catch(console.error);
+        }
+    } catch (e) {
+        console.error('Error in morning digest check:', e);
+    }
+}
+setInterval(checkMorningDigest, 30000); // check every 30s
+
 // Format command responses for WhatsApp
 async function handleWhatsAppCommand(commandText, senderJid) {
     const cmd = commandText.trim().toLowerCase();
@@ -109,19 +186,24 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
     try {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
-            return `🤖 *FREQTRADE WHATSAPP COMMANDS*\n` +
+            return `🤖 *FREQTRADE COMMAND CENTER*\n` +
                    `────────────────────\n` +
-                   `📊 */status* - Active open trades & profit\n` +
+                   `📊 */status* - Active open trades, SL/TP levels & PnL\n` +
+                   `ℹ️ */info* - Live prices, 15m support/resistance & 24h vol\n` +
+                   `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
                    `💰 */profit* - Overall profit & win rate summary\n` +
-                   `⚖️ */balance* - Wallet balance & available USDT\n` +
-                   `📜 */count* - Number of open trades vs max\n` +
+                   `⚖️ */balance* - Wallet balance, free USDT & PKR equity\n` +
+                   `🚨 */forcesell [id/all]* - Instantly market exit open trades\n` +
+                   `📜 */count* - Open trades count vs maximum\n` +
                    `📈 */performance* - Performance per trading pair\n` +
                    `⏱️ */daily* - Daily profit breakdown\n` +
-                   `⏸️ */stop* - Pause trading (stop buying)\n` +
+                   `🌅 */digest* - Generate full daily morning digest right now\n` +
+                   `🔄 */reload* - Reload bot configuration & pairlist\n` +
+                   `⏸️ */stop* - Pause trading bot (stop buying)\n` +
                    `▶️ */start* - Resume trading bot\n` +
                    `ℹ️ */version* - Strategy & bot version info\n` +
                    `────────────────────\n` +
-                   `_Tip: You can type with or without slash (e.g. "profit" or "/profit")_`;
+                   `_Tip: You can type without slash (e.g. "market", "info", "forcesell all")_`;
         }
 
         if (cmd === '/status' || cmd === 'status') {
@@ -137,9 +219,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 const emoji = Number(ratio) >= 0 ? '🟢' : '🔴';
                 const rawDate = trade.open_date || trade.open_date_hum;
                 const openTime = toKarachiTime(rawDate);
+
+                // Calculate Stop Loss and Take Profit prices
+                const openRate = parseFloat(trade.open_rate);
+                const stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * 0.985).toFixed(4);
+                const takeProfitPrice = (openRate * 1.015).toFixed(4);
+
                 msg += `${i + 1}. *${trade.pair}* ${emoji} ${profitPct}%\n` +
-                       `   💵 Open: ${trade.open_rate}\n` +
-                       `   📍 Current: ${trade.current_rate}\n` +
+                       `   💵 Open: *${trade.open_rate}*\n` +
+                       `   📍 Current: *${trade.current_rate}*\n` +
+                       `   🛡️ Stop Loss: *${stopLossPrice}* (-1.5%)\n` +
+                       `   🎯 Take Profit: *${takeProfitPrice}* (+1.5%)\n` +
                        `   ⏱️ Opened: ${openTime}\n` +
                        `   🏷️ Tag: ${trade.enter_tag || 'micro_liquidity_sweep'}\n\n`;
             });
@@ -226,6 +316,116 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd === '/start' || cmd === 'start') {
             await callFreqtradeApi('/start', 'POST');
             return `▶️ *Freqtrade Bot Resumed*\nScanning pairs for entry signals!`;
+        }
+
+        if (cmd === '/info' || cmd === 'info') {
+            // Whitelist pairs
+            const pairs = ['TIA/USDT', 'ETH/USDT', 'SOL/USDT', 'AAVE/USDT'];
+            let msg = `ℹ️ *PAIRLIST MARKET METRICS (15m)*\n────────────────────\n`;
+
+            for (const pair of pairs) {
+                const symbol = pair.replace('/', '');
+                try {
+                    // Fetch 15m klines (last 24 candles = 6 hours of structure) and 24hr ticker
+                    const [klines, ticker] = await Promise.all([
+                        fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=24`),
+                        fetchHttpsJson(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
+                    ]);
+
+                    const highs = klines.map(k => parseFloat(k[2]));
+                    const lows = klines.map(k => parseFloat(k[3]));
+                    const currentPrice = parseFloat(ticker.lastPrice);
+                    const priceChange = parseFloat(ticker.priceChangePercent);
+                    const quoteVolM = (parseFloat(ticker.quoteVolume) / 1e6).toFixed(1);
+
+                    const support15m = Math.min(...lows);
+                    const resistance15m = Math.max(...highs);
+
+                    const changeEmoji = priceChange >= 0 ? '🟢' : '🔴';
+
+                    msg += `🪙 *${pair}* ${changeEmoji} ${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%\n` +
+                           `   💵 Price: *${currentPrice}*\n` +
+                           `   🛡️ 15m Support: *${support15m}*\n` +
+                           `   🎯 15m Resist: *${resistance15m}*\n` +
+                           `   📊 24h Vol: *${quoteVolM}M USDT*\n\n`;
+                } catch (err) {
+                    msg += `🪙 *${pair}*: Data temporarily unavailable\n\n`;
+                }
+            }
+
+            msg += `⏰ *Updated:* ${toKarachiTime(new Date())}`;
+            return msg.trim();
+        }
+
+        if (cmd === '/market' || cmd === 'market') {
+            try {
+                const [fng, btcTicker, btcKlines] = await Promise.all([
+                    fetchHttpsJson('https://api.alternative.me/fng/?limit=1').catch(() => null),
+                    fetchHttpsJson('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT'),
+                    fetchHttpsJson('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=24')
+                ]);
+
+                const fngVal = fng?.data?.[0]?.value || 'N/A';
+                const fngClass = fng?.data?.[0]?.value_classification || 'Neutral';
+                const btcPrice = parseFloat(btcTicker.lastPrice).toLocaleString('en-US', {maximumFractionDigits: 2});
+                const btcChange = parseFloat(btcTicker.priceChangePercent);
+                const btcVolM = (parseFloat(btcTicker.quoteVolume) / 1e6).toFixed(1);
+
+                // Trend estimate
+                const btcHigh = Math.max(...btcKlines.map(k => parseFloat(k[2])));
+                const btcLow = Math.min(...btcKlines.map(k => parseFloat(k[3])));
+                const trend = btcChange >= 1.5 ? '🟢 Bullish Surge' : btcChange <= -1.5 ? '🔴 Bearish Drop' : '🟡 Neutral / Consolidating';
+
+                return `🌐 *MACRO MARKET SENTIMENT*\n` +
+                       `────────────────────\n` +
+                       `🪙 *Bitcoin (BTC):* $${btcPrice} (${btcChange >= 0 ? '+' : ''}${btcChange.toFixed(2)}%)\n` +
+                       `📊 *Market Regime:* ${trend}\n` +
+                       `🛡️ *24h BTC Range:* $${btcLow.toLocaleString('en-US', {maximumFractionDigits: 0})} - $${btcHigh.toLocaleString('en-US', {maximumFractionDigits: 0})}\n` +
+                       `💸 *24h BTC Volume:* $${btcVolM}M USDT\n` +
+                       `🎭 *Fear & Greed Index:* *${fngVal}* (${fngClass})\n` +
+                       `⏰ *Updated:* ${toKarachiTime(new Date())}`;
+            } catch (err) {
+                return `⚠️ Could not fetch market sentiment: ${err.message}`;
+            }
+        }
+
+        if (cmd.startsWith('/forcesell') || cmd.startsWith('forcesell')) {
+            const parts = cmd.split(' ');
+            const arg = parts[1] || 'all';
+
+            try {
+                if (arg === 'all') {
+                    const openTrades = await callFreqtradeApi('/status');
+                    if (!Array.isArray(openTrades) || openTrades.length === 0) {
+                        return `⚠️ No active open trades to sell.`;
+                    }
+                    let results = [];
+                    for (const trade of openTrades) {
+                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(trade.trade_id) });
+                        results.push(`🚨 Force-sold trade #${trade.trade_id} (${trade.pair})`);
+                    }
+                    return results.join('\n');
+                } else {
+                    const tradeId = arg;
+                    await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(tradeId) });
+                    return `🚨 Force exit order sent for trade #${tradeId} at market price!`;
+                }
+            } catch (err) {
+                return `⚠️ Failed to execute force sell: ${err.message}`;
+            }
+        }
+
+        if (cmd === '/reload' || cmd === 'reload') {
+            try {
+                await callFreqtradeApi('/reload_config', 'POST');
+                return `🔄 *Config & Pairlist Reloaded Successfully!*\nBot updated without restarting.`;
+            } catch (err) {
+                return `⚠️ Failed to reload config: ${err.message}`;
+            }
+        }
+
+        if (cmd === '/digest' || cmd === 'digest') {
+            return await generateDailyDigest();
         }
 
         if (cmd === '/version' || cmd === 'version') {
@@ -350,10 +550,16 @@ app.post('/trade-alert', async (req, res) => {
         const type = data.type || 'TRADE_NOTIFICATION';
 
         if (type === 'entry' || data.event_type === 'entry') {
+            const entryRate = parseFloat(data.open_rate || data.rate || 0);
+            const sl = entryRate ? (entryRate * 0.985).toFixed(4) : 'N/A';
+            const tp = entryRate ? (entryRate * 1.015).toFixed(4) : 'N/A';
+
             messageText = `🟢 *FREQTRADE BUY ORDER*\n` +
                           `────────────────────\n` +
                           `🪙 *Pair:* ${data.pair || 'N/A'}\n` +
-                          `💵 *Rate:* ${data.open_rate || data.rate || 'N/A'}\n` +
+                          `💵 *Entry Rate:* *${data.open_rate || data.rate || 'N/A'}*\n` +
+                          `🛡️ *Stop Loss:* *${sl}* (-1.5%)\n` +
+                          `🎯 *Take Profit:* *${tp}* (+1.5%)\n` +
                           `📦 *Stake:* ${data.stake_amount || 'N/A'} ${data.stake_currency || 'USDT'}\n` +
                           `🏷️ *Tag:* ${data.enter_tag || 'micro_liquidity_sweep'}\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
