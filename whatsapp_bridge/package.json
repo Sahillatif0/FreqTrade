@@ -1,0 +1,15 @@
+{
+  "name": "freqtrade-whatsapp-bridge",
+  "version": "1.0.0",
+  "description": "Freqtrade WhatsApp notification bridge powered by Baileys",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.12",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
