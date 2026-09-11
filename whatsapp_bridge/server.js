@@ -176,7 +176,7 @@ function checkMorningDigest() {
     } catch (e) {
         console.error('Error in morning digest check:', e);
     }
-
+}
 
 // Format command responses for WhatsApp
 async function handleWhatsAppCommand(commandText, senderJid) {
@@ -711,4 +711,5 @@ app.get('/status', (req, res) => {
 app.listen(BRIDGE_PORT, () => {
     console.log(`Baileys WhatsApp Bridge Server listening on http://127.0.0.1:${BRIDGE_PORT}`);
     startWhatsApp();
+    setInterval(checkMorningDigest, 60000); // Check every minute for 9:00 AM PKT digest
 });
