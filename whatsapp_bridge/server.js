@@ -293,10 +293,18 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 // Query active whitelist and whitelist data
                 const [statusData, whitelistData] = await Promise.all([
                     callFreqtradeApi('/status').catch(() => []),
-                    callFreqtradeApi('/whitelist').catch(() => ({ whitelist: ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'] }))
+                    callFreqtradeApi('/whitelist').catch(() => null)
                 ]);
 
-                const whitelist = whitelistData.whitelist || whitelistData.length ? whitelistData : ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'];
+                let whitelist = ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'];
+                if (Array.isArray(whitelistData)) {
+                    whitelist = whitelistData;
+                } else if (Array.isArray(whitelistData?.whitelist)) {
+                    whitelist = whitelistData.whitelist;
+                } else if (Array.isArray(whitelistData?.data)) {
+                    whitelist = whitelistData.data;
+                }
+
                 const openPairs = new Set(Array.isArray(statusData) ? statusData.map(t => t.pair) : []);
 
                 let msg = `🎯 *STRATEGY OPPORTUNITY RADAR*\n` +
