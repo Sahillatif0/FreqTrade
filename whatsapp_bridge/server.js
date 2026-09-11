@@ -10,7 +10,6 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
-const ChartJsImage = require('chart.js-image');
 
 function fetchHttpsJson(url) {
     return new Promise((resolve, reject) => {
@@ -177,144 +176,7 @@ function checkMorningDigest() {
     } catch (e) {
         console.error('Error in morning digest check:', e);
     }
-}
-// Generate a 15m candlestick/line price chart with S/R levels using ChartJsImage
-async function generateChartImage(pair, interval = '15m', limit = 24) {
-    let cleanPair = (pair || 'BTC/USDT').toUpperCase().trim();
-    if (!cleanPair.includes('/')) {
-        cleanPair = `${cleanPair}/USDT`;
-    }
-    const symbol = cleanPair.replace('/', '');
 
-    const [klines, ticker] = await Promise.all([
-        fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`),
-        fetchHttpsJson(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
-    ]);
-
-    if (!Array.isArray(klines) || klines.length === 0) {
-        throw new Error(`No candle data found for ${cleanPair}`);
-    }
-
-    const labels = [];
-    const closePrices = [];
-    const highs = [];
-    const lows = [];
-
-    klines.forEach(k => {
-        const time = new Date(k[0]);
-        // Formatted in Karachi time (HH:MM)
-        const timeStr = time.toLocaleTimeString('en-US', {
-            timeZone: 'Asia/Karachi',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
-        });
-        labels.push(timeStr);
-        highs.push(parseFloat(k[2]));
-        lows.push(parseFloat(k[3]));
-        closePrices.push(parseFloat(k[4]));
-    });
-
-    const currentPrice = parseFloat(ticker.lastPrice);
-    const priceChange = parseFloat(ticker.priceChangePercent);
-    const support15m = Math.min(...lows);
-    const resistance15m = Math.max(...highs);
-
-    const isBullish = closePrices[closePrices.length - 1] >= closePrices[0];
-    const lineColor = isBullish ? 'rgba(38, 166, 154, 1)' : 'rgba(239, 83, 80, 1)';
-    const bgColor = isBullish ? 'rgba(38, 166, 154, 0.15)' : 'rgba(239, 83, 80, 0.15)';
-
-    const chartConfig = {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: `${cleanPair} Price`,
-                    data: closePrices,
-                    borderColor: lineColor,
-                    backgroundColor: bgColor,
-                    fill: true,
-                    tension: 0.25,
-                    borderWidth: 2.5,
-                    pointRadius: 2,
-                    pointBackgroundColor: lineColor
-                },
-                {
-                    label: `Resistance ($${resistance15m})`,
-                    data: new Array(labels.length).fill(resistance15m),
-                    borderColor: 'rgba(239, 83, 80, 0.85)',
-                    borderDash: [6, 4],
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false
-                },
-                {
-                    label: `Support ($${support15m})`,
-                    data: new Array(labels.length).fill(support15m),
-                    borderColor: 'rgba(38, 166, 154, 0.85)',
-                    borderDash: [6, 4],
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false
-                }
-            ]
-        },
-        options: {
-            title: {
-                display: true,
-                text: `${cleanPair} ${interval} Structure | Price: $${currentPrice} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)`,
-                fontColor: '#ffffff',
-                fontSize: 16,
-                padding: 12
-            },
-            legend: {
-                labels: {
-                    fontColor: '#cccccc',
-                    fontSize: 11
-                }
-            },
-            scales: {
-                xAxes: [{
-                    ticks: {
-                        fontColor: '#999999',
-                        fontSize: 10,
-                        maxTicksLimit: 8
-                    },
-                    gridLines: {
-                        color: 'rgba(255, 255, 255, 0.08)'
-                    }
-                }],
-                yAxes: [{
-                    ticks: {
-                        fontColor: '#999999',
-                        fontSize: 10
-                    },
-                    gridLines: {
-                        color: 'rgba(255, 255, 255, 0.08)'
-                    }
-                }]
-            }
-        }
-    };
-
-    const chart = new ChartJsImage();
-    chart.setConfig(chartConfig);
-    chart.setWidth(800);
-    chart.setHeight(450);
-    chart.setBackgroundColor('#131722'); // TradingView dark theme
-
-    const imageBuffer = await chart.toBuffer();
-
-    return {
-        pair: cleanPair,
-        buffer: imageBuffer,
-        currentPrice,
-        priceChange,
-        support: support15m,
-        resistance: resistance15m
-    };
-}
 
 // Format command responses for WhatsApp
 async function handleWhatsAppCommand(commandText, senderJid) {
@@ -326,7 +188,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return `🤖 *FREQTRADE COMMAND CENTER*\n` +
                    `────────────────────\n` +
                    `📊 */status* - Active open trades, SL/TP levels & PnL\n` +
-                   `📈 */chart [pair]* - Generate 15m candlestick chart image with S/R levels\n` +
+                   `📜 */trades [limit]* - Past executed opportunities (buy price, sell price, PnL, duration)\n` +
+                   `🎯 */opportunities* - Live opportunity radar across whitelist pairs\n` +
                    `ℹ️ */info* - Live prices, 15m support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
                    `💰 */profit* - Overall profit & win rate summary\n` +
@@ -341,7 +204,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `▶️ */start* - Resume trading bot\n` +
                    `ℹ️ */version* - Strategy & bot version info\n` +
                    `────────────────────\n` +
-                   `_Tip: You can type without slash (e.g. "market", "info", "forcesell all")_`;
+                   `_Tip: You can type without slash (e.g. "trades", "opportunities", "status")_`;
         }
 
         if (cmd === '/status' || cmd === 'status') {
@@ -372,6 +235,111 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                        `   🏷️ Tag: ${trade.enter_tag || 'micro_liquidity_sweep'}\n\n`;
             });
             return msg.trim();
+        }
+
+        if (cmd.startsWith('/trades') || cmd.startsWith('trades') || cmd === '/history' || cmd === 'history') {
+            const parts = commandText.trim().split(/\s+/);
+            const limit = parseInt(parts[1]) || 5;
+
+            try {
+                const tradesData = await callFreqtradeApi(`/trades?limit=${limit}`);
+                const trades = tradesData?.trades || (Array.isArray(tradesData) ? tradesData : []);
+
+                if (!trades || trades.length === 0) {
+                    return `📜 *EXECUTED OPPORTUNITIES*\n────────────────────\nNo closed trades recorded in history yet.`;
+                }
+
+                let msg = `📜 *PAST EXECUTED OPPORTUNITIES (Last ${trades.length})*\n────────────────────\n`;
+
+                trades.forEach((t, i) => {
+                    const isProfit = (t.close_profit || 0) >= 0;
+                    const emoji = isProfit ? '🟢' : '🔴';
+                    const pnlPct = ((t.close_profit || 0) * 100).toFixed(2);
+                    const pnlUsdt = (t.close_profit_abs || t.profit_amount || 0).toFixed(2);
+
+                    const buyRate = parseFloat(t.open_rate || 0).toFixed(4);
+                    const sellRate = parseFloat(t.close_rate || 0).toFixed(4);
+                    const buyTime = toKarachiTime(t.open_date);
+                    const sellTime = toKarachiTime(t.close_date);
+
+                    // Duration formatting
+                    let durStr = 'N/A';
+                    if (t.open_timestamp && t.close_timestamp) {
+                        const durMin = Math.round((t.close_timestamp - t.open_timestamp) / 60000);
+                        if (durMin < 60) {
+                            durStr = `${durMin}m`;
+                        } else {
+                            durStr = `${Math.floor(durMin / 60)}h ${durMin % 60}m`;
+                        }
+                    }
+
+                    msg += `${i + 1}. *${t.pair}* ${emoji} *${pnlPct}%* (${pnlUsdt} USDT)\n` +
+                           `   📥 *Buy Price:* ${buyRate} (${buyTime})\n` +
+                           `   📤 *Sell Price:* ${sellRate} (${sellTime})\n` +
+                           `   🏷️ *Strategy Tag:* ${t.enter_tag || 'micro_liquidity_sweep'}\n` +
+                           `   🚪 *Exit Reason:* ${t.exit_reason || 'roi'}\n` +
+                           `   ⏱️ *Hold Duration:* ${durStr}\n\n`;
+                });
+
+                msg += `_Use "/trades 10" to view more records._`;
+                return msg.trim();
+            } catch (err) {
+                return `⚠️ Could not fetch trade history: ${err.message}`;
+            }
+        }
+
+        if (cmd === '/opportunities' || cmd === 'opportunities' || cmd === '/opps' || cmd === 'opps' || cmd === '/signals') {
+            try {
+                // Query active whitelist and whitelist data
+                const [statusData, whitelistData] = await Promise.all([
+                    callFreqtradeApi('/status').catch(() => []),
+                    callFreqtradeApi('/whitelist').catch(() => ({ whitelist: ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'] }))
+                ]);
+
+                const whitelist = whitelistData.whitelist || whitelistData.length ? whitelistData : ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'];
+                const openPairs = new Set(Array.isArray(statusData) ? statusData.map(t => t.pair) : []);
+
+                let msg = `🎯 *STRATEGY OPPORTUNITY RADAR*\n` +
+                          `────────────────────\n` +
+                          `Strategy: *HighFrequencySweepElite*\n` +
+                          `Scan Setup: *18-bar Liquidity Sweeps & Reclaims*\n\n`;
+
+                for (const pair of whitelist.slice(0, 5)) {
+                    const symbol = pair.replace('/', '');
+                    try {
+                        const [klines, ticker] = await Promise.all([
+                            fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=5m&limit=25`),
+                            fetchHttpsJson(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
+                        ]);
+
+                        if (Array.isArray(klines) && klines.length >= 20) {
+                            const last18Lows = klines.slice(-19, -1).map(k => parseFloat(k[3]));
+                            const swingLow18 = Math.min(...last18Lows);
+                            const currentPrice = parseFloat(ticker.lastPrice);
+                            const isTraded = openPairs.has(pair);
+
+                            // Calculate distance from 18-bar sweep trigger
+                            const distToSweep = (((currentPrice - swingLow18) / swingLow18) * 100).toFixed(2);
+                            const sweepStatus = currentPrice <= swingLow18 
+                                ? '🚨 *IN SWEEP ZONE (Trigger Active)*' 
+                                : `Approaching (+${distToSweep}% to level)`;
+
+                            const statusTag = isTraded ? '⚡ *TRADED (POSITION OPEN)*' : sweepStatus;
+
+                            msg += `🪙 *${pair}* | Price: *$${currentPrice}*\n` +
+                                   `   🛡️ 18-Bar Sweep Level: *$${swingLow18}*\n` +
+                                   `   📡 Status: ${statusTag}\n\n`;
+                        }
+                    } catch (e) {
+                        msg += `🪙 *${pair}*: Scanning...\n\n`;
+                    }
+                }
+
+                msg += `⏰ *Radar Time:* ${toKarachiTime(new Date())}`;
+                return msg.trim();
+            } catch (err) {
+                return `⚠️ Could not scan opportunities: ${err.message}`;
+            }
         }
 
         if (cmd === '/profit' || cmd === 'profit') {
@@ -566,41 +534,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return await generateDailyDigest();
         }
 
-        if (cmd.startsWith('/chart') || cmd.startsWith('chart')) {
-            const parts = commandText.trim().split(/\s+/);
-            let requestedPair = parts[1];
 
-            // If no pair specified, try to default to the first active open trade pair or BTC
-            if (!requestedPair) {
-                try {
-                    const openTrades = await callFreqtradeApi('/status');
-                    if (Array.isArray(openTrades) && openTrades.length > 0) {
-                        requestedPair = openTrades[0].pair;
-                    }
-                } catch (e) {
-                    // Ignore and fallback to BTC
-                }
-                if (!requestedPair) requestedPair = 'BTC';
-            }
-
-            try {
-                const chartData = await generateChartImage(requestedPair);
-                const caption = `📈 *${chartData.pair} 15m Structure Chart*\n` +
-                                `────────────────────\n` +
-                                `💵 *Current:* $${chartData.currentPrice} (${chartData.priceChange >= 0 ? '+' : ''}${chartData.priceChange.toFixed(2)}%)\n` +
-                                `🎯 *15m Resistance:* $${chartData.resistance}\n` +
-                                `🛡️ *15m Support:* $${chartData.support}\n` +
-                                `⏰ *Time:* ${toKarachiTime(new Date())}`;
-
-                return {
-                    type: 'image',
-                    image: chartData.buffer,
-                    caption: caption
-                };
-            } catch (chartErr) {
-                return `⚠️ Failed to generate chart for *${requestedPair}*: ${chartErr.message}`;
-            }
-        }
 
         if (cmd === '/version' || cmd === 'version') {
             const data = await callFreqtradeApi('/version');
