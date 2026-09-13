@@ -39,11 +39,34 @@ const FT_USERNAME = 'freqtrader';
 const FT_PASSWORD = '724455';
 
 const TARGET_FILE = path.join(__dirname, 'target_number.txt');
+const ALERTS_FILE = path.join(__dirname, 'custom_alerts.json');
 let TARGET_JID = '';
 
 if (fs.existsSync(TARGET_FILE)) {
     TARGET_JID = fs.readFileSync(TARGET_FILE, 'utf8').trim();
 }
+
+// In-memory & disk-backed custom price alerts: [{ id, pair, targetPrice, direction, createdTime }]
+let customAlerts = [];
+if (fs.existsSync(ALERTS_FILE)) {
+    try {
+        customAlerts = JSON.parse(fs.readFileSync(ALERTS_FILE, 'utf8'));
+    } catch (e) {
+        customAlerts = [];
+    }
+}
+
+function saveCustomAlerts() {
+    try {
+        fs.writeFileSync(ALERTS_FILE, JSON.stringify(customAlerts, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Error saving custom alerts:', e.message);
+    }
+}
+
+// Track trade profit milestones to prevent duplicate milestone notifications
+// tradeId -> { plus1: boolean, minus1: boolean, twoHours: boolean }
+const tradeMilestones = {};
 
 let sock = null;
 let isConnected = false;
@@ -178,6 +201,139 @@ function checkMorningDigest() {
     }
 }
 
+// Background Monitor: Check Custom Price Alerts (Every 20 seconds)
+async function checkCustomPriceAlerts() {
+    if (!customAlerts.length || !TARGET_JID || !sock || !isConnected) return;
+
+    try {
+        const uniqueSymbols = [...new Set(customAlerts.map(a => a.symbol))];
+        for (const sym of uniqueSymbols) {
+            try {
+                const ticker = await fetchHttpsJson(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+                const currentPrice = parseFloat(ticker.price);
+                if (!currentPrice) continue;
+
+                // Check alerts for this symbol
+                for (let i = customAlerts.length - 1; i >= 0; i--) {
+                    const alert = customAlerts[i];
+                    if (alert.symbol !== sym) continue;
+
+                    let triggered = false;
+                    if (alert.direction === 'above' && currentPrice >= alert.targetPrice) {
+                        triggered = true;
+                    } else if (alert.direction === 'below' && currentPrice <= alert.targetPrice) {
+                        triggered = true;
+                    }
+
+                    if (triggered) {
+                        const dirEmoji = alert.direction === 'above' ? '🚀' : '📉';
+                        const alertMsg = `${dirEmoji} *PRICE ALERT TRIGGERED*\n` +
+                                         `────────────────────\n` +
+                                         `🪙 *Pair:* ${alert.pair}\n` +
+                                         `🎯 *Target Price:* $${alert.targetPrice}\n` +
+                                         `💵 *Current Price:* *$${currentPrice}*\n` +
+                                         `⏰ *Time:* ${toKarachiTime(new Date())}\n` +
+                                         `────────────────────\n` +
+                                         `_Alert has been fulfilled and removed._`;
+
+                        await sock.sendMessage(TARGET_JID, { text: alertMsg });
+                        console.log(`Custom Price Alert fulfilled for ${alert.pair} at $${currentPrice}`);
+
+                        // Remove triggered alert
+                        customAlerts.splice(i, 1);
+                        saveCustomAlerts();
+                    }
+                }
+            } catch (err) {
+                // Ignore transient network errors
+            }
+        }
+    } catch (e) {
+        console.error('Error in custom price alerts check:', e.message);
+    }
+}
+
+// Background Monitor: Live Trade Milestones (+1.0% Profit & Duration Warnings)
+async function checkTradeMilestones() {
+    if (!TARGET_JID || !sock || !isConnected) return;
+
+    try {
+        const openTrades = await callFreqtradeApi('/status').catch(() => []);
+        if (!Array.isArray(openTrades) || openTrades.length === 0) return;
+
+        const now = Date.now();
+
+        for (const trade of openTrades) {
+            const tradeId = String(trade.trade_id);
+            if (!tradeMilestones[tradeId]) {
+                tradeMilestones[tradeId] = {
+                    plus1: false,
+                    minus1: false,
+                    twoHours: false
+                };
+            }
+
+            const state = tradeMilestones[tradeId];
+            const pnlRatio = trade.profit_pct !== undefined ? (trade.profit_pct / 100) : (trade.profit_ratio || 0);
+            const pnlPct = (pnlRatio * 100).toFixed(2);
+            const openRate = parseFloat(trade.open_rate);
+            const currentRate = parseFloat(trade.current_rate);
+            const tpPrice = (openRate * 1.015).toFixed(4);
+
+            // Milestone 1: Reaching +1.0% profit (Closing in on +1.5% TP)
+            if (pnlRatio >= 0.010 && !state.plus1) {
+                state.plus1 = true;
+                const msg = `🔔 *TRADE MILESTONE: +1.0% PROFIT*\n` +
+                            `────────────────────\n` +
+                            `🪙 *Pair:* ${trade.pair}\n` +
+                            `📈 *Current PnL:* *+${pnlPct}%*\n` +
+                            `💵 *Current Price:* ${currentRate}\n` +
+                            `🎯 *Take Profit Target:* ${tpPrice} (+1.5%)\n` +
+                            `⏱️ *Status:* Approaching Take Profit! 🚀\n` +
+                            `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                await sock.sendMessage(TARGET_JID, { text: msg });
+                console.log(`Milestone alert sent for trade #${tradeId} (${trade.pair}): +1.0%`);
+            }
+
+            // Milestone 2: Dipping to -1.0% (Risk Warning)
+            if (pnlRatio <= -0.010 && !state.minus1) {
+                state.minus1 = true;
+                const slPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * 0.985).toFixed(4);
+                const msg = `⚠️ *TRADE WARNING: -1.0% DRAWDOWN*\n` +
+                            `────────────────────\n` +
+                            `🪙 *Pair:* ${trade.pair}\n` +
+                            `📉 *Current PnL:* *${pnlPct}%*\n` +
+                            `💵 *Current Price:* ${currentRate}\n` +
+                            `🛡️ *Stop Loss Level:* ${slPrice} (-1.5%)\n` +
+                            `⏱️ *Time:* ${toKarachiTime(new Date())}`;
+
+                await sock.sendMessage(TARGET_JID, { text: msg });
+                console.log(`Milestone alert sent for trade #${tradeId} (${trade.pair}): -1.0%`);
+            }
+
+            // Milestone 3: Duration Warning (> 2 Hours in single trade)
+            if (trade.open_timestamp && !state.twoHours) {
+                const elapsedMin = Math.round((now - trade.open_timestamp) / 60000);
+                if (elapsedMin >= 120) {
+                    state.twoHours = true;
+                    const msg = `⏳ *TRADE DURATION NOTICE (2h+)*\n` +
+                                `────────────────────\n` +
+                                `🪙 *Pair:* ${trade.pair}\n` +
+                                `⏱️ *Open Duration:* ${Math.floor(elapsedMin / 60)}h ${elapsedMin % 60}m\n` +
+                                `📊 *Current PnL:* ${pnlPct}%\n` +
+                                `💡 _Reminder: If consolidation continues, you can exit manually via "/forcesell ${tradeId}"_\n` +
+                                `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                    await sock.sendMessage(TARGET_JID, { text: msg });
+                }
+            }
+        }
+    } catch (err) {
+        // Ignore background polling errors
+    }
+}
+
 // Format command responses for WhatsApp
 async function handleWhatsAppCommand(commandText, senderJid) {
     const cmd = commandText.trim().toLowerCase();
@@ -190,6 +346,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `📊 */status* - Active open trades, SL/TP levels & PnL\n` +
                    `📜 */trades [limit]* - Past executed opportunities (buy price, sell price, PnL, duration)\n` +
                    `🎯 */opportunities* - Live opportunity radar across whitelist pairs\n` +
+                   `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert (e.g. /alert SOL 135)\n` +
+                   `📋 */alerts* - View all active custom price alerts\n` +
+                   `🗑️ */clearalerts* - Clear active custom price alerts\n` +
                    `ℹ️ */info* - Live prices, 15m support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
                    `💰 */profit* - Overall profit & win rate summary\n` +
@@ -204,7 +363,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `▶️ */start* - Resume trading bot\n` +
                    `ℹ️ */version* - Strategy & bot version info\n` +
                    `────────────────────\n` +
-                   `_Tip: You can type without slash (e.g. "trades", "opportunities", "status")_`;
+                   `_Tip: You can type without slash (e.g. "alert SOL 135", "trades", "status")_`;
         }
 
         if (cmd === '/status' || cmd === 'status') {
@@ -544,6 +703,102 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
 
 
+        // Custom Price Alert Setting: e.g. /alert BTC 85000 or /alert SOL 135.5
+        if (cmd.startsWith('/alert ') || cmd.startsWith('alert ')) {
+            const parts = commandText.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return `⚠️ *Usage:* /alert [pair] [price]\n_Example:_ /alert SOL 135.50 or /alert BTC 85000`;
+            }
+
+            let rawPair = parts[1].toUpperCase().trim();
+            if (!rawPair.includes('/')) {
+                rawPair = `${rawPair}/USDT`;
+            }
+            const symbol = rawPair.replace('/', '');
+            const targetPrice = parseFloat(parts[2]);
+
+            if (isNaN(targetPrice) || targetPrice <= 0) {
+                return `⚠️ Invalid price: "${parts[2]}". Please provide a valid positive number.`;
+            }
+
+            try {
+                // Fetch current price to automatically determine alert direction
+                const ticker = await fetchHttpsJson(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+                const currentPrice = parseFloat(ticker.price);
+
+                if (!currentPrice) {
+                    return `⚠️ Could not find market price for pair: *${rawPair}*.`;
+                }
+
+                const direction = targetPrice >= currentPrice ? 'above' : 'below';
+                const dirEmoji = direction === 'above' ? '📈 Crossing Above' : '📉 Dropping Below';
+
+                const newAlert = {
+                    id: Date.now().toString(36),
+                    pair: rawPair,
+                    symbol: symbol,
+                    targetPrice: targetPrice,
+                    direction: direction,
+                    createdPrice: currentPrice,
+                    createdAt: toKarachiTime(new Date())
+                };
+
+                customAlerts.push(newAlert);
+                saveCustomAlerts();
+
+                return `🔔 *CUSTOM PRICE ALERT SET*\n` +
+                       `────────────────────\n` +
+                       `🪙 *Pair:* ${rawPair}\n` +
+                       `🎯 *Target Price:* $${targetPrice}\n` +
+                       `💵 *Current Price:* $${currentPrice}\n` +
+                       `📡 *Condition:* Trigger when ${dirEmoji}\n` +
+                       `🆔 *Alert ID:* ${newAlert.id}\n` +
+                       `⏰ *Created:* ${newAlert.createdAt}\n\n` +
+                       `_You will receive an instant WhatsApp alert when touched!_`;
+            } catch (err) {
+                return `⚠️ Failed to create alert: ${err.message}`;
+            }
+        }
+
+        // List active alerts: /alerts
+        if (cmd === '/alerts' || cmd === 'alerts') {
+            if (!customAlerts.length) {
+                return `🔔 *ACTIVE PRICE ALERTS*\n────────────────────\nNo active price alerts set.\n_Create one with: "/alert [pair] [price]"_`;
+            }
+
+            let msg = `🔔 *ACTIVE PRICE ALERTS (${customAlerts.length})*\n────────────────────\n`;
+            customAlerts.forEach((a, i) => {
+                const dirEmoji = a.direction === 'above' ? '📈 >=' : '📉 <=';
+                msg += `${i + 1}. *${a.pair}* | ${dirEmoji} *$${a.targetPrice}*\n` +
+                       `   🆔 ID: ${a.id} | Set at: ${a.createdAt}\n\n`;
+            });
+
+            msg += `_To cancel all: "/clearalerts"_`;
+            return msg.trim();
+        }
+
+        // Clear alerts: /clearalerts or /delalert [id]
+        if (cmd === '/clearalerts' || cmd === 'clearalerts' || cmd.startsWith('/delalert ') || cmd.startsWith('delalert ')) {
+            const parts = commandText.trim().split(/\s+/);
+            if (parts.length >= 2) {
+                const idToDelete = parts[1].trim();
+                const initialLen = customAlerts.length;
+                customAlerts = customAlerts.filter(a => a.id !== idToDelete);
+                saveCustomAlerts();
+
+                if (customAlerts.length < initialLen) {
+                    return `🗑️ Alert *${idToDelete}* removed successfully!`;
+                } else {
+                    return `⚠️ Alert ID *${idToDelete}* not found. Check active IDs with "/alerts".`;
+                }
+            } else {
+                const count = customAlerts.length;
+                customAlerts = [];
+                saveCustomAlerts();
+                return `🗑️ Cleared all ${count} active price alerts!`;
+            }
+        }
+
         if (cmd === '/version' || cmd === 'version') {
             const data = await callFreqtradeApi('/version');
             return `ℹ️ *BOT INFO*\n────────────────────\nVersion: ${data.version}\nStrategy: HighFrequencySweepElite`;
@@ -719,5 +974,7 @@ app.get('/status', (req, res) => {
 app.listen(BRIDGE_PORT, () => {
     console.log(`Baileys WhatsApp Bridge Server listening on http://127.0.0.1:${BRIDGE_PORT}`);
     startWhatsApp();
-    setInterval(checkMorningDigest, 60000); // Check every minute for 9:00 AM PKT digest
+    setInterval(checkMorningDigest, 60000);        // Check every minute for 9:00 AM PKT digest
+    setInterval(checkCustomPriceAlerts, 20000);    // Check custom price alerts every 20 seconds
+    setInterval(checkTradeMilestones, 15000);      // Check trade +1.0% milestones & duration every 15 seconds
 });
