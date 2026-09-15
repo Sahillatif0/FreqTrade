@@ -1,7 +1,10 @@
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason
+    DisconnectReason,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion,
+    jidNormalizedUser
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcode = require('qrcode-terminal');
@@ -812,12 +815,21 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 }
 
 async function startWhatsApp() {
+    const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
+    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: false }));
 
     sock = makeWASocket({
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, logger)
+        },
+        logger,
+        printQRInTerminal: false,
+        browser: ['Freqtrade Bot', 'Chrome', '1.0.0'],
+        syncFullHistory: false,
+        generateHighQualityLinkPreview: true
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -920,6 +932,7 @@ app.post('/trade-alert', async (req, res) => {
             return res.status(400).json({ error: 'No recipient specified. Send a message to the bot first.' });
         }
 
+        destination = jidNormalizedUser(destination);
         if (!destination.includes('@')) {
             destination = `${destination.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
         }
