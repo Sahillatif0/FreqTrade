@@ -4,7 +4,8 @@ const {
     DisconnectReason,
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
-    jidNormalizedUser
+    jidNormalizedUser,
+    Browsers
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcode = require('qrcode-terminal');
@@ -64,6 +65,25 @@ function saveCustomAlerts() {
         fs.writeFileSync(ALERTS_FILE, JSON.stringify(customAlerts, null, 2), 'utf8');
     } catch (e) {
         console.error('Error saving custom alerts:', e.message);
+    }
+}
+
+const TP_FILE = path.join(__dirname, 'custom_takeprofits.json');
+// In-memory & disk-backed custom take profit targets per trade: { [tradeId]: { targetRatio, targetPrice, pair } }
+let customTakeProfits = {};
+if (fs.existsSync(TP_FILE)) {
+    try {
+        customTakeProfits = JSON.parse(fs.readFileSync(TP_FILE, 'utf8'));
+    } catch (e) {
+        customTakeProfits = {};
+    }
+}
+
+function saveCustomTakeProfits() {
+    try {
+        fs.writeFileSync(TP_FILE, JSON.stringify(customTakeProfits, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Error saving custom take profits:', e.message);
     }
 }
 
@@ -328,7 +348,38 @@ async function checkTradeMilestones() {
                                 `💡 _Reminder: If consolidation continues, you can exit manually via "/forcesell ${tradeId}"_\n` +
                                 `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sock.sendMessage(TARGET_JID, { text: msg });
+            // Automated Custom Take Profit Execution Check
+            if (customTakeProfits[tradeId]) {
+                const target = customTakeProfits[tradeId];
+                let shouldTakeProfit = false;
+
+                if (target.targetPrice && currentRate >= target.targetPrice) {
+                    shouldTakeProfit = true;
+                } else if (target.targetRatio && pnlRatio >= target.targetRatio) {
+                    shouldTakeProfit = true;
+                }
+
+                if (shouldTakeProfit) {
+                    delete customTakeProfits[tradeId];
+                    saveCustomTakeProfits();
+
+                    try {
+                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: tradeId });
+                        const tpMsg = `🎯 *TAKE PROFIT TRIGGERED!*\n` +
+                                      `────────────────────\n` +
+                                      `🪙 *Pair:* ${trade.pair}\n` +
+                                      `🆔 *Trade ID:* #${tradeId}\n` +
+                                      `💰 *Locked Profit:* *+${pnlPct}%*\n` +
+                                      `💵 *Exit Price:* $${currentRate}\n` +
+                                      `🎯 *Target Price:* $${target.targetPrice ? target.targetPrice : (openRate * (1 + target.targetRatio)).toFixed(4)}\n` +
+                                      `🚀 *Action:* Limit/Market exit executed successfully!\n` +
+                                      `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                        await sock.sendMessage(TARGET_JID, { text: tpMsg });
+                        console.log(`Automated custom take profit executed for trade #${tradeId} (${trade.pair})`);
+                    } catch (exitErr) {
+                        console.error(`Failed to execute take profit exit for trade #${tradeId}:`, exitErr.message);
+                    }
                 }
             }
         }
@@ -356,6 +407,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
                    `💰 */profit* - Overall profit & win rate summary\n` +
                    `⚖️ */balance* - Wallet balance, free USDT & PKR equity\n` +
+                   `🛡️ */stoploss [id] [pct/price]* - Update stop loss for a single trade (e.g. /stoploss 1 -0.01)\n` +
+                   `🎯 */takeprofit [id] [pct/price]* - Set custom take profit target for a single trade (e.g. /tp 1 +2.0%)\n` +
                    `🚨 */forcesell [id/all]* - Instantly market exit open trades\n` +
                    `📜 */count* - Open trades count vs maximum\n` +
                    `📈 */performance* - Performance per trading pair\n` +
@@ -386,13 +439,27 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 // Calculate Stop Loss and Take Profit prices
                 const openRate = parseFloat(trade.open_rate);
                 const stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * 0.985).toFixed(4);
-                const takeProfitPrice = (openRate * 1.015).toFixed(4);
+                let takeProfitPrice = (openRate * 1.015).toFixed(4);
+                let tpExtra = '(+1.5%)';
+
+                const tradeId = String(trade.trade_id);
+                if (customTakeProfits[tradeId]) {
+                    const ctp = customTakeProfits[tradeId];
+                    if (ctp.targetPrice) {
+                        takeProfitPrice = ctp.targetPrice.toFixed(4);
+                        const diffPct = (((ctp.targetPrice - openRate) / openRate) * 100).toFixed(2);
+                        tpExtra = `(+${diffPct}% 🎯 Custom)`;
+                    } else if (ctp.targetRatio) {
+                        takeProfitPrice = (openRate * (1 + ctp.targetRatio)).toFixed(4);
+                        tpExtra = `(+${(ctp.targetRatio * 100).toFixed(2)}% 🎯 Custom)`;
+                    }
+                }
 
                 msg += `${i + 1}. *${trade.pair}* ${emoji} ${profitPct}%\n` +
                        `   💵 Open: *${trade.open_rate}*\n` +
                        `   📍 Current: *${trade.current_rate}*\n` +
                        `   🛡️ Stop Loss: *${stopLossPrice}* (-1.5%)\n` +
-                       `   🎯 Take Profit: *${takeProfitPrice}* (+1.5%)\n` +
+                       `   🎯 Take Profit: *${takeProfitPrice}* ${tpExtra}\n` +
                        `   ⏱️ Opened: ${openTime}\n` +
                        `   🏷️ Tag: ${trade.enter_tag || 'micro_liquidity_sweep'}\n\n`;
             });
@@ -458,7 +525,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     callFreqtradeApi('/whitelist').catch(() => null)
                 ]);
 
-                let whitelist = ['SOL/USDT', 'BTC/USDT', 'ETH/USDT', 'TIA/USDT'];
+                let whitelist = ['SOL/USDT', 'WIF/USDT', 'XRP/USDT', 'ETH/USDT', 'TIA/USDT', 'AAVE/USDT'];
                 if (Array.isArray(whitelistData)) {
                     whitelist = whitelistData;
                 } else if (Array.isArray(whitelistData?.whitelist)) {
@@ -474,7 +541,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                           `Strategy: *HighFrequencySweepElite*\n` +
                           `Scan Setup: *18-bar Liquidity Sweeps & Reclaims*\n\n`;
 
-                for (const pair of whitelist.slice(0, 5)) {
+                for (const pair of whitelist) {
                     const symbol = pair.replace('/', '');
                     try {
                         const [klines, ticker] = await Promise.all([
@@ -595,8 +662,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd === '/info' || cmd === 'info') {
-            // Whitelist pairs
-            const pairs = ['TIA/USDT', 'ETH/USDT', 'SOL/USDT', 'AAVE/USDT'];
+            // Fetch live whitelist from Freqtrade, fallback to full basket
+            const whitelistData = await callFreqtradeApi('/whitelist').catch(() => null);
+            let pairs = ['SOL/USDT', 'WIF/USDT', 'XRP/USDT', 'ETH/USDT', 'TIA/USDT', 'AAVE/USDT'];
+            if (Array.isArray(whitelistData)) {
+                pairs = whitelistData;
+            } else if (Array.isArray(whitelistData?.whitelist)) {
+                pairs = whitelistData.whitelist;
+            } else if (Array.isArray(whitelistData?.data)) {
+                pairs = whitelistData.data;
+            }
+
             let msg = `ℹ️ *PAIRLIST MARKET METRICS (15m)*\n────────────────────\n`;
 
             for (const pair of pairs) {
@@ -688,6 +764,174 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
             } catch (err) {
                 return `⚠️ Failed to execute force sell: ${err.message}`;
+            }
+        }
+
+        if (cmd.startsWith('/stoploss') || cmd.startsWith('stoploss') || cmd.startsWith('/sl ') || cmd.startsWith('sl ')) {
+            const parts = commandText.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return `🛡️ *UPDATE STOP LOSS*\n────────────────────\n` +
+                       `⚠️ *Usage:* /stoploss [trade_id] [stoploss_value]\n\n` +
+                       `*Examples:*\n` +
+                       `• \`/stoploss 1 -0.010\` (Set -1.0% stop loss)\n` +
+                       `• \`/stoploss 1 -1.5%\` (Set -1.5% stop loss)\n` +
+                       `• \`/stoploss 1 134.50\` (Set absolute stop loss price)\n\n` +
+                       `_Check active trade IDs with "/status"_`;
+            }
+
+            const tradeId = parts[1].replace('#', '').trim();
+            let rawValue = parts[2].trim().replace('%', '');
+            let stoplossValue = parseFloat(rawValue);
+
+            if (isNaN(stoplossValue)) {
+                return `⚠️ Invalid stop loss value: "${parts[2]}". Please provide a percentage (e.g. -0.012 or -1.2%) or an absolute price.`;
+            }
+
+            try {
+                // Check if tradeId is valid in open trades
+                const openTrades = await callFreqtradeApi('/status');
+                const targetTrade = Array.isArray(openTrades) ? openTrades.find(t => String(t.trade_id) === String(tradeId)) : null;
+
+                if (!targetTrade) {
+                    return `⚠️ Active trade #${tradeId} not found. Check active trades with "/status".`;
+                }
+
+                // If user provided a positive percentage e.g. 1.2 or 0.012, make it negative for relative SL
+                if (stoplossValue > 0 && stoplossValue <= 0.20) {
+                    stoplossValue = -stoplossValue;
+                } else if (stoplossValue > 0 && stoplossValue < 50 && stoplossValue < targetTrade.open_rate * 0.5) {
+                    // e.g. user entered "1.5" meaning -1.5%
+                    stoplossValue = -(stoplossValue / 100);
+                }
+
+                // If user provided an absolute price level (e.g. 135.20)
+                let payload = {};
+                if (stoplossValue > 0 && stoplossValue >= targetTrade.open_rate * 0.5) {
+                    // Absolute price mode: calculate relative ratio from open_rate
+                    const openRate = parseFloat(targetTrade.open_rate);
+                    const ratio = (stoplossValue - openRate) / openRate;
+                    payload = { stoploss: parseFloat(ratio.toFixed(4)) };
+                } else {
+                    // Ratio mode: e.g. -0.010 (-1.0%)
+                    payload = { stoploss: stoplossValue };
+                }
+
+                // Update trade stoploss in Freqtrade
+                // Freqtrade REST API: POST /trades/{tradeid}/stoploss or PUT /trades/{tradeid}
+                const res = await callFreqtradeApi(`/trades/${tradeId}/stoploss`, 'POST', payload).catch(async (e) => {
+                    // Fallback to query param or direct trade update
+                    return await callFreqtradeApi(`/trades/${tradeId}`, 'PUT', payload);
+                });
+
+                const newPct = (Math.abs(payload.stoploss) * 100).toFixed(2);
+                const openRate = parseFloat(targetTrade.open_rate);
+                const estimatedPrice = (openRate * (1 + payload.stoploss)).toFixed(4);
+
+                return `🛡️ *STOP LOSS UPDATED*\n────────────────────\n` +
+                       `🪙 *Pair:* ${targetTrade.pair}\n` +
+                       `🆔 *Trade ID:* #${tradeId}\n` +
+                       `🛡️ *New Stop Loss:* *-${newPct}%* (~$${estimatedPrice})\n` +
+                       `💵 *Open Rate:* $${openRate}\n` +
+                       `⏰ *Time:* ${toKarachiTime(new Date())}\n\n` +
+                       `_Freqtrade has adjusted risk for this trade._`;
+            } catch (err) {
+                return `⚠️ Failed to update stop loss for trade #${tradeId}: ${err.message}`;
+            }
+        }
+
+        if (cmd.startsWith('/takeprofit') || cmd.startsWith('takeprofit') || cmd.startsWith('/tp ') || cmd.startsWith('tp ')) {
+            const parts = commandText.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return `🎯 *SET CUSTOM TAKE PROFIT*\n────────────────────\n` +
+                       `⚠️ *Usage:* /takeprofit [trade_id] [profit_pct/price]\n\n` +
+                       `*Examples:*\n` +
+                       `• \`/tp 1 0.025\` (Take profit at +2.5%)\n` +
+                       `• \`/tp 1 +2.0%\` (Take profit at +2.0%)\n` +
+                       `• \`/tp 1 138.50\` (Take profit at exact price $138.50)\n` +
+                       `• \`/tp 1 clear\` (Remove custom target and use strategy default)\n\n` +
+                       `_Check active trade IDs with "/status"_`;
+            }
+
+            const tradeId = parts[1].replace('#', '').trim();
+            const actionArg = parts[2].trim().toLowerCase();
+
+            try {
+                const openTrades = await callFreqtradeApi('/status');
+                const targetTrade = Array.isArray(openTrades) ? openTrades.find(t => String(t.trade_id) === String(tradeId)) : null;
+
+                if (!targetTrade) {
+                    return `⚠️ Active trade #${tradeId} not found. Check active trades with "/status".`;
+                }
+
+                if (actionArg === 'clear' || actionArg === 'reset') {
+                    delete customTakeProfits[tradeId];
+                    saveCustomTakeProfits();
+                    return `🎯 Cleared custom take profit for trade #${tradeId}. Reverted to strategy defaults.`;
+                }
+
+                let rawValue = parts[2].trim().replace('+', '').replace('%', '');
+                let tpValue = parseFloat(rawValue);
+
+                if (isNaN(tpValue) || tpValue <= 0) {
+                    return `⚠️ Invalid take profit target: "${parts[2]}". Please provide a positive value (e.g. 2.0% or exact price).`;
+                }
+
+                const openRate = parseFloat(targetTrade.open_rate);
+
+                // Determine if input is a ratio, a percentage, or an absolute price
+                if (tpValue >= openRate * 0.5) {
+                    // Absolute target price mode (e.g. 138.50)
+                    if (tpValue <= openRate) {
+                        return `⚠️ Target price ($${tpValue}) must be higher than entry price ($${openRate}) for long positions.`;
+                    }
+                    customTakeProfits[tradeId] = {
+                        pair: targetTrade.pair,
+                        targetPrice: tpValue,
+                        openRate: openRate,
+                        setAt: toKarachiTime(new Date())
+                    };
+                } else if (tpValue < 1.0) {
+                    // Decimal ratio mode e.g. 0.025 (+2.5%)
+                    customTakeProfits[tradeId] = {
+                        pair: targetTrade.pair,
+                        targetRatio: tpValue,
+                        openRate: openRate,
+                        setAt: toKarachiTime(new Date())
+                    };
+                } else {
+                    // Whole percentage mode e.g. 2.5 meaning +2.5%
+                    customTakeProfits[tradeId] = {
+                        pair: targetTrade.pair,
+                        targetRatio: tpValue / 100,
+                        openRate: openRate,
+                        setAt: toKarachiTime(new Date())
+                    };
+                }
+
+                saveCustomTakeProfits();
+
+                const ctp = customTakeProfits[tradeId];
+                let displayPct = '';
+                let displayPrice = '';
+
+                if (ctp.targetPrice) {
+                    displayPrice = `$${ctp.targetPrice.toFixed(4)}`;
+                    displayPct = `+${(((ctp.targetPrice - openRate) / openRate) * 100).toFixed(2)}%`;
+                } else {
+                    displayPct = `+${(ctp.targetRatio * 100).toFixed(2)}%`;
+                    displayPrice = `~$${(openRate * (1 + ctp.targetRatio)).toFixed(4)}`;
+                }
+
+                return `🎯 *CUSTOM TAKE PROFIT ARMED*\n────────────────────\n` +
+                       `🪙 *Pair:* ${targetTrade.pair}\n` +
+                       `🆔 *Trade ID:* #${tradeId}\n` +
+                       `🎯 *Take Profit Target:* *${displayPct}* (${displayPrice})\n` +
+                       `💵 *Open Rate:* $${openRate}\n` +
+                       `📍 *Current Rate:* $${targetTrade.current_rate}\n` +
+                       `⏰ *Time:* ${toKarachiTime(new Date())}\n\n` +
+                       `_The bridge monitor will automatically exit this trade the instant target is touched!_`;
+            } catch (err) {
+                return `⚠️ Failed to set take profit for trade #${tradeId}: ${err.message}`;
             }
         }
 
@@ -827,7 +1071,7 @@ async function startWhatsApp() {
         },
         logger,
         printQRInTerminal: false,
-        browser: ['Freqtrade Bot', 'Chrome', '1.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
         generateHighQualityLinkPreview: true
     });
@@ -932,9 +1176,11 @@ app.post('/trade-alert', async (req, res) => {
             return res.status(400).json({ error: 'No recipient specified. Send a message to the bot first.' });
         }
 
-        destination = jidNormalizedUser(destination);
+        destination = destination.trim();
         if (!destination.includes('@')) {
             destination = `${destination.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        } else {
+            destination = jidNormalizedUser(destination);
         }
 
         let messageText = '';
