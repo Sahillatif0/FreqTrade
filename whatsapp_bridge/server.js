@@ -348,6 +348,10 @@ async function checkTradeMilestones() {
                                 `💡 _Reminder: If consolidation continues, you can exit manually via "/forcesell ${tradeId}"_\n` +
                                 `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
+                    await sock.sendMessage(TARGET_JID, { text: msg });
+                }
+            }
+
             // Automated Custom Take Profit Execution Check
             if (customTakeProfits[tradeId]) {
                 const target = customTakeProfits[tradeId];
