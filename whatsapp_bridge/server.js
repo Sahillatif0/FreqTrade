@@ -36,11 +36,32 @@ app.use(express.json());
 
 const BRIDGE_PORT = 5001;
 
-// Freqtrade API Server Config (Default ports: 8080 or 8088)
-const FT_API_HOST = '127.0.0.1';
-const FT_API_PORT = 8080; // set to 8088 if running config_web.json
-const FT_USERNAME = 'freqtrader';
-const FT_PASSWORD = '724455';
+// Dual-Bot Freqtrade API Server Config
+const FT_BOTS = {
+    bot1: {
+        id: 1,
+        name: 'Sweep Elite 7',
+        tag: '⚡ SWEEP ELITE 7',
+        host: '127.0.0.1',
+        port: 8080,
+        username: 'freqtrader',
+        password: process.env.FT_PASSWORD || '724455'
+    },
+    bot2: {
+        id: 2,
+        name: 'Trend Ignition Elite',
+        tag: '🚀 TREND IGNITION ELITE',
+        host: '127.0.0.1',
+        port: 8081,
+        username: 'freqtrader',
+        password: process.env.FT_PASSWORD || '724455'
+    }
+};
+
+const FT_API_HOST = FT_BOTS.bot1.host;
+const FT_API_PORT = FT_BOTS.bot1.port;
+const FT_USERNAME = FT_BOTS.bot1.username;
+const FT_PASSWORD = FT_BOTS.bot1.password;
 
 const TARGET_FILE = path.join(__dirname, 'target_number.txt');
 const ALERTS_FILE = path.join(__dirname, 'custom_alerts.json');
@@ -123,13 +144,14 @@ function toKarachiTime(dateInput) {
     }
 }
 
-// Helper function to call Freqtrade REST API
-function callFreqtradeApi(endpoint, method = 'GET', body = null) {
+// Helper function to call Freqtrade REST API on specific bot (default: bot1)
+function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1') {
     return new Promise((resolve, reject) => {
-        const auth = 'Basic ' + Buffer.from(`${FT_USERNAME}:${FT_PASSWORD}`).toString('base64');
+        const bot = (typeof botKey === 'object' ? botKey : FT_BOTS[botKey]) || FT_BOTS.bot1;
+        const auth = 'Basic ' + Buffer.from(`${bot.username}:${bot.password}`).toString('base64');
         const options = {
-            hostname: FT_API_HOST,
-            port: FT_API_PORT,
+            hostname: bot.host,
+            port: bot.port,
             path: '/api/v1' + endpoint,
             method: method,
             headers: {
@@ -155,7 +177,7 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null) {
         req.on('error', (err) => reject(err));
         req.on('timeout', () => {
             req.destroy();
-            reject(new Error('Freqtrade API timeout'));
+            reject(new Error(`Freqtrade API timeout on ${bot.name} (port ${bot.port})`));
         });
 
         if (body) {
@@ -281,22 +303,31 @@ async function checkTradeMilestones() {
     if (!TARGET_JID || !sock || !isConnected) return;
 
     try {
-        const openTrades = await callFreqtradeApi('/status').catch(() => []);
-        if (!Array.isArray(openTrades) || openTrades.length === 0) return;
+        const [open1, open2] = await Promise.all([
+            callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
+            callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+        ]);
+
+        const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
+        const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
+        const openTrades = [...tagged1, ...tagged2];
+
+        if (openTrades.length === 0) return;
 
         const now = Date.now();
 
         for (const trade of openTrades) {
             const tradeId = String(trade.trade_id);
-            if (!tradeMilestones[tradeId]) {
-                tradeMilestones[tradeId] = {
+            const milestoneKey = `${trade.botKey}_${tradeId}`;
+            if (!tradeMilestones[milestoneKey]) {
+                tradeMilestones[milestoneKey] = {
                     plus1: false,
                     minus1: false,
                     twoHours: false
                 };
             }
 
-            const state = tradeMilestones[tradeId];
+            const state = tradeMilestones[milestoneKey];
             const pnlRatio = trade.profit_pct !== undefined ? (trade.profit_pct / 100) : (trade.profit_ratio || 0);
             const pnlPct = (pnlRatio * 100).toFixed(2);
             const openRate = parseFloat(trade.open_rate);
@@ -368,9 +399,10 @@ async function checkTradeMilestones() {
                     saveCustomTakeProfits();
 
                     try {
-                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: tradeId });
+                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: tradeId }, trade.botKey);
                         const tpMsg = `🎯 *TAKE PROFIT TRIGGERED!*\n` +
                                       `────────────────────\n` +
+                                      `🤖 *Bot:* ${trade.botTag}\n` +
                                       `🪙 *Pair:* ${trade.pair}\n` +
                                       `🆔 *Trade ID:* #${tradeId}\n` +
                                       `💰 *Locked Profit:* *+${pnlPct}%*\n` +
@@ -399,84 +431,129 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
     try {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
-            return `🤖 *FREQTRADE COMMAND CENTER*\n` +
+            return `🤖 *DUAL BOT COMMAND CENTER*\n` +
                    `────────────────────\n` +
-                   `📊 */status* - Active open trades, SL/TP levels & PnL\n` +
-                   `📜 */trades [limit]* - Past executed opportunities (buy price, sell price, PnL, duration)\n` +
-                   `🎯 */opportunities* - Live opportunity radar across whitelist pairs\n` +
-                   `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert (e.g. /alert SOL 135)\n` +
+                   `📊 */status* - Active open trades across both bots\n` +
+                   `   • */status 1* (Sweep Elite 7) | */status 2* (Trend Ignition)\n` +
+                   `📜 */trades [limit]* - Past executed opportunities\n` +
+                   `   • */trades 1* or */trades 2* to filter by bot\n` +
+                   `💰 */profit* - Cumulative profit summary across both bots\n` +
+                   `   • */profit 1* | */profit 2* for single bot breakdown\n` +
+                   `⚖️ */balance* - Shared Binance wallet balance & PKR equity\n` +
+                   `🎯 */opportunities* - Live sweep radar across whitelist pairs\n` +
+                   `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert\n` +
                    `📋 */alerts* - View all active custom price alerts\n` +
                    `🗑️ */clearalerts* - Clear active custom price alerts\n` +
                    `ℹ️ */info* - Live prices, 15m support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
-                   `💰 */profit* - Overall profit & win rate summary\n` +
-                   `⚖️ */balance* - Wallet balance, free USDT & PKR equity\n` +
-                   `🛡️ */stoploss [id] [pct/price]* - Update stop loss for a single trade (e.g. /stoploss 1 -0.01)\n` +
-                   `🎯 */takeprofit [id] [pct/price]* - Set custom take profit target for a single trade (e.g. /tp 1 +2.0%)\n` +
-                   `🚨 */forcesell [id/all]* - Instantly market exit open trades\n` +
-                   `📜 */count* - Open trades count vs maximum\n` +
+                   `🛡️ */stoploss [1/2] [id] [pct/price]* - Update stop loss for a trade\n` +
+                   `🎯 */takeprofit [1/2] [id] [pct/price]* - Set custom take profit target\n` +
+                   `🚨 */forcesell [1/2/all] [id]* - Instantly market exit trades\n` +
                    `📈 */performance* - Performance per trading pair\n` +
                    `⏱️ */daily* - Daily profit breakdown\n` +
-                   `🌅 */digest* - Generate full daily morning digest right now\n` +
-                   `🔄 */reload* - Reload bot configuration & pairlist\n` +
-                   `⏸️ */stop* - Pause trading bot (stop buying)\n` +
-                   `▶️ */start* - Resume trading bot\n` +
+                   `🌅 */digest* - Generate full morning digest\n` +
+                   `🔄 */reload [1/2/all]* - Reload bot configs\n` +
+                   `⏸️ */stop [1/2/all]* - Pause trading (stop buying)\n` +
+                   `▶️ */start [1/2/all]* - Resume trading\n` +
                    `ℹ️ */version* - Strategy & bot version info\n` +
                    `────────────────────\n` +
-                   `_Tip: You can type without slash (e.g. "alert SOL 135", "trades", "status")_`;
+                   `_Tip: Both bots trade independently with full balance._`;
         }
 
-        if (cmd === '/status' || cmd === 'status') {
-            const data = await callFreqtradeApi('/status');
-            if (!Array.isArray(data) || data.length === 0) {
-                return `📊 *OPEN TRADES STATUS*\n────────────────────\nNo active open trades right now.\nBot is scanning for liquidity sweeps! 🔍`;
+        if (cmd.startsWith('/status') || cmd.startsWith('status')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
+
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2];
+            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+
+            const results = await Promise.all(
+                botsToQuery.map(async (b) => {
+                    const data = await callFreqtradeApi('/status', 'GET', null, b).catch(() => null);
+                    return { bot: b, trades: Array.isArray(data) ? data : [] };
+                })
+            );
+
+            const allTradesCount = results.reduce((acc, r) => acc + r.trades.length, 0);
+
+            if (allTradesCount === 0) {
+                return `📊 *OPEN TRADES STATUS*\n────────────────────\nNo active open trades on active bots.\nBoth bots are scanning for signals! 🔍`;
             }
 
-            let msg = `📊 *ACTIVE OPEN TRADES (${data.length})*\n────────────────────\n`;
-            data.forEach((trade, i) => {
-                const ratio = trade.profit_pct !== undefined ? trade.profit_pct : ((trade.profit_ratio || 0) * 100);
-                const profitPct = Number(ratio).toFixed(2);
-                const emoji = Number(ratio) >= 0 ? '🟢' : '🔴';
-                const rawDate = trade.open_date || trade.open_date_hum;
-                const openTime = toKarachiTime(rawDate);
+            let msg = `📊 *ACTIVE OPEN TRADES (${allTradesCount})*\n────────────────────\n`;
 
-                // Calculate Stop Loss and Take Profit prices
-                const openRate = parseFloat(trade.open_rate);
-                const stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * 0.985).toFixed(4);
-                let takeProfitPrice = (openRate * 1.015).toFixed(4);
-                let tpExtra = '(+1.5%)';
+            results.forEach(({ bot, trades }) => {
+                if (!trades.length) return;
+                msg += `🤖 *${bot.tag}* (${trades.length} active):\n`;
+                trades.forEach((trade, i) => {
+                    const ratio = trade.profit_pct !== undefined ? trade.profit_pct : ((trade.profit_ratio || 0) * 100);
+                    const profitPct = Number(ratio).toFixed(2);
+                    const emoji = Number(ratio) >= 0 ? '🟢' : '🔴';
+                    const rawDate = trade.open_date || trade.open_date_hum;
+                    const openTime = toKarachiTime(rawDate);
 
-                const tradeId = String(trade.trade_id);
-                if (customTakeProfits[tradeId]) {
-                    const ctp = customTakeProfits[tradeId];
-                    if (ctp.targetPrice) {
-                        takeProfitPrice = ctp.targetPrice.toFixed(4);
-                        const diffPct = (((ctp.targetPrice - openRate) / openRate) * 100).toFixed(2);
-                        tpExtra = `(+${diffPct}% 🎯 Custom)`;
-                    } else if (ctp.targetRatio) {
-                        takeProfitPrice = (openRate * (1 + ctp.targetRatio)).toFixed(4);
-                        tpExtra = `(+${(ctp.targetRatio * 100).toFixed(2)}% 🎯 Custom)`;
+                    const openRate = parseFloat(trade.open_rate);
+                    const isIgnition = bot.id === 2;
+                    const defaultSlPct = isIgnition ? '-2.2%' : '-1.5%';
+                    const defaultSlRatio = isIgnition ? 0.978 : 0.985;
+                    const stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * defaultSlRatio).toFixed(4);
+
+                    let takeProfitPrice = (openRate * 1.015).toFixed(4);
+                    let tpExtra = '(+1.5%)';
+
+                    const tradeId = String(trade.trade_id);
+                    if (customTakeProfits[tradeId]) {
+                        const ctp = customTakeProfits[tradeId];
+                        if (ctp.targetPrice) {
+                            takeProfitPrice = ctp.targetPrice.toFixed(4);
+                            const diffPct = (((ctp.targetPrice - openRate) / openRate) * 100).toFixed(2);
+                            tpExtra = `(+${diffPct}% 🎯 Custom)`;
+                        } else if (ctp.targetRatio) {
+                            takeProfitPrice = (openRate * (1 + ctp.targetRatio)).toFixed(4);
+                            tpExtra = `(+${(ctp.targetRatio * 100).toFixed(2)}% 🎯 Custom)`;
+                        }
                     }
-                }
 
-                msg += `${i + 1}. *${trade.pair}* ${emoji} ${profitPct}%\n` +
-                       `   💵 Open: *${trade.open_rate}*\n` +
-                       `   📍 Current: *${trade.current_rate}*\n` +
-                       `   🛡️ Stop Loss: *${stopLossPrice}* (-1.5%)\n` +
-                       `   🎯 Take Profit: *${takeProfitPrice}* ${tpExtra}\n` +
-                       `   ⏱️ Opened: ${openTime}\n` +
-                       `   🏷️ Tag: ${trade.enter_tag || 'micro_liquidity_sweep'}\n\n`;
+                    msg += `  ${i + 1}. *${trade.pair}* (ID: #${trade.trade_id}) ${emoji} ${profitPct}%\n` +
+                           `     💵 Open: *${trade.open_rate}*\n` +
+                           `     📍 Current: *${trade.current_rate}*\n` +
+                           `     🛡️ Stop Loss: *${stopLossPrice}* (${defaultSlPct})\n` +
+                           `     🎯 Take Profit: *${takeProfitPrice}* ${tpExtra}\n` +
+                           `     ⏱️ Opened: ${openTime}\n` +
+                           `     🏷️ Tag: ${trade.enter_tag || 'entry'}\n\n`;
+                });
             });
+
             return msg.trim();
         }
 
         if (cmd.startsWith('/trades') || cmd.startsWith('trades') || cmd === '/history' || cmd === 'history') {
             const parts = commandText.trim().split(/\s+/);
-            const limit = parseInt(parts[1]) || 5;
+            let limit = 5;
+            let targetBot = 'all';
+
+            for (let p of parts.slice(1)) {
+                if (p === '1' || p === 'sweep') targetBot = 'bot1';
+                else if (p === '2' || p === 'ignition') targetBot = 'bot2';
+                else if (!isNaN(parseInt(p))) limit = parseInt(p);
+            }
 
             try {
-                const tradesData = await callFreqtradeApi(`/trades?limit=${limit}`);
-                const trades = tradesData?.trades || (Array.isArray(tradesData) ? tradesData : []);
+                let trades = [];
+                if (targetBot === 'all') {
+                    const [t1, t2] = await Promise.all([
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot2').catch(() => ({ trades: [] }))
+                    ]);
+                    const list1 = (t1.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot1.tag }));
+                    const list2 = (t2.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot2.tag }));
+                    trades = [...list1, ...list2].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
+                } else {
+                    const tData = await callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, targetBot).catch(() => ({ trades: [] }));
+                    const bObj = FT_BOTS[targetBot];
+                    trades = (tData.trades || []).map(t => ({ ...t, botTag: bObj.tag }));
+                }
 
                 if (!trades || trades.length === 0) {
                     return `📜 *EXECUTED OPPORTUNITIES*\n────────────────────\nNo closed trades recorded in history yet.`;
@@ -495,26 +572,21 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     const buyTime = toKarachiTime(t.open_date);
                     const sellTime = toKarachiTime(t.close_date);
 
-                    // Duration formatting
                     let durStr = 'N/A';
                     if (t.open_timestamp && t.close_timestamp) {
                         const durMin = Math.round((t.close_timestamp - t.open_timestamp) / 60000);
-                        if (durMin < 60) {
-                            durStr = `${durMin}m`;
-                        } else {
-                            durStr = `${Math.floor(durMin / 60)}h ${durMin % 60}m`;
-                        }
+                        durStr = durMin < 60 ? `${durMin}m` : `${Math.floor(durMin / 60)}h ${durMin % 60}m`;
                     }
 
-                    msg += `${i + 1}. *${t.pair}* ${emoji} *${pnlPct}%* (${pnlUsdt} USDT)\n` +
+                    msg += `${i + 1}. *${t.pair}* [${t.botTag || 'BOT'}] ${emoji} *${pnlPct}%* (${pnlUsdt} USDT)\n` +
                            `   📥 *Buy Price:* ${buyRate} (${buyTime})\n` +
                            `   📤 *Sell Price:* ${sellRate} (${sellTime})\n` +
-                           `   🏷️ *Strategy Tag:* ${t.enter_tag || 'micro_liquidity_sweep'}\n` +
+                           `   🏷️ *Strategy Tag:* ${t.enter_tag || 'entry'}\n` +
                            `   🚪 *Exit Reason:* ${t.exit_reason || 'roi'}\n` +
                            `   ⏱️ *Hold Duration:* ${durStr}\n\n`;
                 });
 
-                msg += `_Use "/trades 10" to view more records._`;
+                msg += `_Tip: Use "/trades 1" (Sweep) or "/trades 2" (Ignition)_`;
                 return msg.trim();
             } catch (err) {
                 return `⚠️ Could not fetch trade history: ${err.message}`;
@@ -583,21 +655,74 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             }
         }
 
-        if (cmd === '/profit' || cmd === 'profit') {
-            const data = await callFreqtradeApi('/profit');
-            const totalClosed = data.closed_trade_count !== undefined ? data.closed_trade_count : (data.total_trades || 0);
-            const winRate = data.winrate !== undefined ? (data.winrate * 100).toFixed(1) : (((data.winning_trades || 0) / (totalClosed || 1)) * 100).toFixed(1);
-            const firstTime = data.first_trade_humanized || toKarachiTime(data.first_trade_date);
-            const latestTime = data.latest_trade_humanized || toKarachiTime(data.latest_trade_date);
-            
-            return `💰 *PROFIT SUMMARY*\n` +
+        if (cmd.startsWith('/profit') || cmd.startsWith('profit')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
+
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2];
+            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+
+            const results = await Promise.all(
+                botsToQuery.map(async (b) => {
+                    const d = await callFreqtradeApi('/profit', 'GET', null, b).catch(() => null);
+                    return { bot: b, data: d };
+                })
+            );
+
+            if (botsToQuery.length === 1) {
+                const { bot, data } = results[0];
+                if (!data) return `⚠️ Could not fetch profit data from ${bot.name}.`;
+                const totalClosed = data.closed_trade_count !== undefined ? data.closed_trade_count : (data.total_trades || 0);
+                const winRate = data.winrate !== undefined ? (data.winrate * 100).toFixed(1) : (((data.winning_trades || 0) / (totalClosed || 1)) * 100).toFixed(1);
+                return `💰 *PROFIT SUMMARY (${bot.tag})*\n` +
+                       `────────────────────\n` +
+                       `💵 *Closed Profit:* ${data.profit_closed_coin?.toFixed(2) || 0} USDT\n` +
+                       `📊 *Closed Trades:* ${totalClosed}\n` +
+                       `🎯 *Wins / Losses:* ${data.winning_trades || 0} W / ${data.losing_trades || 0} L\n` +
+                       `🏆 *Win Rate:* ${winRate}%\n` +
+                       `⏱️ *First Trade:* ${data.first_trade_humanized || toKarachiTime(data.first_trade_date)}\n` +
+                       `⏱️ *Latest Trade:* ${data.latest_trade_humanized || toKarachiTime(data.latest_trade_date)}`;
+            }
+
+            let totClosedProfit = 0;
+            let totTrades = 0;
+            let totWins = 0;
+            let totLosses = 0;
+            let breakdownText = '';
+
+            results.forEach(({ bot, data }) => {
+                if (data) {
+                    const closed = data.profit_closed_coin || 0;
+                    const cCount = data.closed_trade_count !== undefined ? data.closed_trade_count : (data.total_trades || 0);
+                    const wins = data.winning_trades || 0;
+                    const losses = data.losing_trades || 0;
+                    const wr = cCount > 0 ? ((wins / cCount) * 100).toFixed(1) : '0.0';
+
+                    totClosedProfit += closed;
+                    totTrades += cCount;
+                    totWins += wins;
+                    totLosses += losses;
+
+                    breakdownText += `🤖 *${bot.tag}*\n` +
+                                     `   Profit: *${closed.toFixed(2)} USDT* | Trades: ${cCount} (${wr}% WR: ${wins}W/${losses}L)\n`;
+                } else {
+                    breakdownText += `🤖 *${bot.tag}*: Offline / Unreachable\n`;
+                }
+            });
+
+            const overallWR = totTrades > 0 ? ((totWins / totTrades) * 100).toFixed(1) : '0.0';
+
+            return `💰 *CUMULATIVE DUAL BOT PROFIT*\n` +
                    `────────────────────\n` +
-                   `💵 *Closed Profit:* ${data.profit_closed_coin?.toFixed(2) || 0} USDT (${((data.profit_closed_ratio_mean || 0) * 100).toFixed(2)}% avg)\n` +
-                   `📊 *Closed Trades:* ${totalClosed}\n` +
-                   `🎯 *Wins / Losses:* ${data.winning_trades || 0} W / ${data.losing_trades || 0} L\n` +
-                   `🏆 *Win Rate:* ${winRate}%\n` +
-                   `⏱️ *First Trade:* ${firstTime}\n` +
-                   `⏱️ *Latest Trade:* ${latestTime}`;
+                   `💵 *Combined Net Profit:* *${totClosedProfit >= 0 ? '+' : ''}${totClosedProfit.toFixed(2)} USDT*\n` +
+                   `📊 *Total Closed Trades:* ${totTrades}\n` +
+                   `🎯 *Combined Wins / Losses:* ${totWins} W / ${totLosses} L\n` +
+                   `🏆 *Combined Win Rate:* *${overallWR}%*\n\n` +
+                   `*Individual Bot Breakdown:*\n` +
+                   breakdownText +
+                   `────────────────────\n` +
+                   `_Tip: Query individually with "/profit 1" or "/profit 2"_`;
         }
 
         if (cmd === '/balance' || cmd === 'balance') {
@@ -655,14 +780,40 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return msg.trim();
         }
 
-        if (cmd === '/stop' || cmd === 'stop') {
-            await callFreqtradeApi('/stop', 'POST');
-            return `⏸️ *Freqtrade Bot Paused*\nNew trade entries are stopped. Open trades will continue to be monitored for exit.`;
+        if (cmd.startsWith('/stop') || cmd.startsWith('stop')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
+            if (targetArg === '1' || targetArg === 'sweep') {
+                await callFreqtradeApi('/stop', 'POST', null, 'bot1');
+                return `⏸️ *[${FT_BOTS.bot1.tag}] Paused*\nNew trade entries paused on Sweep Elite 7.`;
+            } else if (targetArg === '2' || targetArg === 'ignition') {
+                await callFreqtradeApi('/stop', 'POST', null, 'bot2');
+                return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Trend Ignition Elite.`;
+            } else {
+                await Promise.all([
+                    callFreqtradeApi('/stop', 'POST', null, 'bot1').catch(() => null),
+                    callFreqtradeApi('/stop', 'POST', null, 'bot2').catch(() => null)
+                ]);
+                return `⏸️ *Both Bots Paused*\nNew trade entries stopped across both bots. Open trades still monitored for exit.`;
+            }
         }
 
-        if (cmd === '/start' || cmd === 'start') {
-            await callFreqtradeApi('/start', 'POST');
-            return `▶️ *Freqtrade Bot Resumed*\nScanning pairs for entry signals!`;
+        if (cmd.startsWith('/start') || cmd.startsWith('start')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
+            if (targetArg === '1' || targetArg === 'sweep') {
+                await callFreqtradeApi('/start', 'POST', null, 'bot1');
+                return `▶️ *[${FT_BOTS.bot1.tag}] Resumed*\nScanning for liquidity sweeps!`;
+            } else if (targetArg === '2' || targetArg === 'ignition') {
+                await callFreqtradeApi('/start', 'POST', null, 'bot2');
+                return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for trend ignition setups!`;
+            } else {
+                await Promise.all([
+                    callFreqtradeApi('/start', 'POST', null, 'bot1').catch(() => null),
+                    callFreqtradeApi('/start', 'POST', null, 'bot2').catch(() => null)
+                ]);
+                return `▶️ *Both Bots Resumed*\nBoth strategies scanning pairs for entry signals!`;
+            }
         }
 
         if (cmd === '/info' || cmd === 'info') {
@@ -746,25 +897,55 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd.startsWith('/forcesell') || cmd.startsWith('forcesell')) {
-            const parts = cmd.split(' ');
-            const arg = parts[1] || 'all';
+            const parts = cmd.split(/\s+/);
+            const targetArg = parts[1] || 'all';
+            const specificTradeId = parts[2];
 
             try {
-                if (arg === 'all') {
-                    const openTrades = await callFreqtradeApi('/status');
-                    if (!Array.isArray(openTrades) || openTrades.length === 0) {
-                        return `⚠️ No active open trades to sell.`;
-                    }
+                if (targetArg === 'all') {
                     let results = [];
-                    for (const trade of openTrades) {
-                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(trade.trade_id) });
-                        results.push(`🚨 Force-sold trade #${trade.trade_id} (${trade.pair})`);
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2]) {
+                        const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
+                        if (Array.isArray(openTrades)) {
+                            for (const trade of openTrades) {
+                                await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(trade.trade_id) }, b);
+                                results.push(`🚨 [${b.tag}] Force-sold trade #${trade.trade_id} (${trade.pair})`);
+                            }
+                        }
                     }
+                    if (results.length === 0) return `⚠️ No active open trades to sell on any bot.`;
                     return results.join('\n');
+                } else if (targetArg === '1' || targetArg === '2') {
+                    const b = targetArg === '1' ? FT_BOTS.bot1 : FT_BOTS.bot2;
+                    if (specificTradeId) {
+                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(specificTradeId) }, b);
+                        return `🚨 [${b.tag}] Force exit sent for trade #${specificTradeId} at market price!`;
+                    } else {
+                        const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
+                        if (!Array.isArray(openTrades) || openTrades.length === 0) return `⚠️ No active open trades on ${b.name}.`;
+                        let results = [];
+                        for (const trade of openTrades) {
+                            await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(trade.trade_id) }, b);
+                            results.push(`🚨 [${b.tag}] Force-sold trade #${trade.trade_id} (${trade.pair})`);
+                        }
+                        return results.join('\n');
+                    }
                 } else {
-                    const tradeId = arg;
-                    await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(tradeId) });
-                    return `🚨 Force exit order sent for trade #${tradeId} at market price!`;
+                    const tradeId = targetArg;
+                    let found = false;
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2]) {
+                        const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
+                        if (Array.isArray(openTrades) && openTrades.some(t => String(t.trade_id) === String(tradeId))) {
+                            await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(tradeId) }, b);
+                            found = true;
+                            return `🚨 [${b.tag}] Force exit sent for trade #${tradeId} at market price!`;
+                        }
+                    }
+                    if (!found) {
+                        // Fallback attempt on bot1
+                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(tradeId) }, 'bot1');
+                        return `🚨 Force exit order sent for trade #${tradeId} at market price!`;
+                    }
                 }
             } catch (err) {
                 return `⚠️ Failed to execute force sell: ${err.message}`;
@@ -939,10 +1120,23 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             }
         }
 
-        if (cmd === '/reload' || cmd === 'reload') {
+        if (cmd.startsWith('/reload') || cmd.startsWith('reload')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
             try {
-                await callFreqtradeApi('/reload_config', 'POST');
-                return `🔄 *Config & Pairlist Reloaded Successfully!*\nBot updated without restarting.`;
+                if (targetArg === '1' || targetArg === 'sweep') {
+                    await callFreqtradeApi('/reload_config', 'POST', null, 'bot1');
+                    return `🔄 *[${FT_BOTS.bot1.tag}] Config & Pairlist Reloaded Successfully!*`;
+                } else if (targetArg === '2' || targetArg === 'ignition') {
+                    await callFreqtradeApi('/reload_config', 'POST', null, 'bot2');
+                    return `🔄 *[${FT_BOTS.bot2.tag}] Config & Pairlist Reloaded Successfully!*`;
+                } else {
+                    await Promise.all([
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot1').catch(() => null),
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot2').catch(() => null)
+                    ]);
+                    return `🔄 *Both Bots Configs Reloaded Successfully!*\nBots updated without restarting.`;
+                }
             } catch (err) {
                 return `⚠️ Failed to reload config: ${err.message}`;
             }
@@ -1051,8 +1245,15 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd === '/version' || cmd === 'version') {
-            const data = await callFreqtradeApi('/version');
-            return `ℹ️ *BOT INFO*\n────────────────────\nVersion: ${data.version}\nStrategy: HighFrequencySweepElite`;
+            const [v1, v2] = await Promise.all([
+                callFreqtradeApi('/version', 'GET', null, 'bot1').catch(() => null),
+                callFreqtradeApi('/version', 'GET', null, 'bot2').catch(() => null)
+            ]);
+            return `ℹ️ *DUAL BOT STATUS*\n────────────────────\n` +
+                   `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
+                   `   Strategy: HighFrequencySweepElite7 (5m Scalp)\n\n` +
+                   `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
+                   `   Strategy: TrendIgnitionElite (15m Runner)`;
         }
 
         return null; // unrecognized message, ignore
@@ -1189,25 +1390,27 @@ app.post('/trade-alert', async (req, res) => {
 
         let messageText = '';
         const type = data.type || 'TRADE_NOTIFICATION';
+        const botTitle = data.bot_label || '🤖 FREQTRADE';
 
         if (type === 'entry' || data.event_type === 'entry') {
             const entryRate = parseFloat(data.open_rate || data.rate || 0);
-            const sl = entryRate ? (entryRate * 0.985).toFixed(4) : 'N/A';
-            const tp = entryRate ? (entryRate * 1.015).toFixed(4) : 'N/A';
+            const isIgnition = (data.bot_label && data.bot_label.includes('IGNITION')) || (data.enter_tag && data.enter_tag.includes('ignition'));
+            const slRatio = isIgnition ? 0.978 : 0.985;
+            const slPct = isIgnition ? '-2.2%' : '-1.5%';
+            const sl = entryRate ? (entryRate * slRatio).toFixed(4) : 'N/A';
 
-            messageText = `🟢 *FREQTRADE BUY ORDER*\n` +
+            messageText = `🟢 *${botTitle} BUY ORDER*\n` +
                           `────────────────────\n` +
                           `🪙 *Pair:* ${data.pair || 'N/A'}\n` +
                           `💵 *Entry Rate:* *${data.open_rate || data.rate || 'N/A'}*\n` +
-                          `🛡️ *Stop Loss:* *${sl}* (-1.5%)\n` +
-                          `🎯 *Take Profit:* *${tp}* (+1.5%)\n` +
+                          `🛡️ *Stop Loss:* *${sl}* (${slPct})\n` +
                           `📦 *Stake:* ${data.stake_amount || 'N/A'} ${data.stake_currency || 'USDT'}\n` +
-                          `🏷️ *Tag:* ${data.enter_tag || 'micro_liquidity_sweep'}\n` +
+                          `🏷️ *Tag:* ${data.enter_tag || 'trade_entry'}\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else if (type === 'exit' || data.event_type === 'exit') {
             const isProfit = (data.profit_percent || data.profit_ratio || 0) >= 0;
             const emoji = isProfit ? '🎯' : '⚠️';
-            messageText = `${emoji} *FREQTRADE SELL ORDER*\n` +
+            messageText = `${emoji} *${botTitle} SELL ORDER*\n` +
                           `────────────────────\n` +
                           `🪙 *Pair:* ${data.pair || 'N/A'}\n` +
                           `💰 *PnL:* ${data.profit_percent || ((data.profit_ratio || 0) * 100).toFixed(2)}%\n` +
@@ -1216,7 +1419,7 @@ app.post('/trade-alert', async (req, res) => {
                           `⏰ *Duration:* ${data.duration || 'N/A'}\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else {
-            messageText = `🤖 *FREQTRADE ALERT*\n` +
+            messageText = `🤖 *${botTitle} ALERT*\n` +
                           `────────────────────\n` +
                           `${data.message || JSON.stringify(data, null, 2)}`;
         }
@@ -1230,6 +1433,165 @@ app.post('/trade-alert', async (req, res) => {
     }
 });
 
+// Webhook endpoint to receive pre-trade setup alerts (sweep mode & trend ignition mode)
+app.post('/mode-alert', async (req, res) => {
+    try {
+        const data = req.body;
+        console.log('Received Strategy Mode Alert:', JSON.stringify(data));
+
+        if (!sock || !isConnected) {
+            return res.status(503).json({ error: 'WhatsApp not connected yet. Please scan QR.' });
+        }
+
+        let destination = req.query.to || TARGET_JID;
+        if (!destination) {
+            return res.status(400).json({ error: 'No recipient specified.' });
+        }
+
+        destination = destination.trim();
+        if (!destination.includes('@')) {
+            destination = `${destination.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        } else {
+            destination = jidNormalizedUser(destination);
+        }
+
+        const modeType = data.mode || data.type || 'SWEEP'; // 'SWEEP' or 'IGNITION'
+        let messageText = '';
+
+        if (modeType.toUpperCase().includes('SWEEP')) {
+            messageText = `⚡ *SWEEP MODE DETECTED!*\n` +
+                          `────────────────────\n` +
+                          `🤖 *Strategy:* HighFrequencySweepElite7 (5m)\n` +
+                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
+                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
+                          `🛡️ *18-Bar Swing Low:* $${data.swing_low || data.trigger_level || 'N/A'}\n` +
+                          `🔍 *Status:* Active Liquidity Flush / Wick Absorption in progress!\n` +
+                          `📦 *Action:* Bot ready to fire entry on reclaim candle.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (modeType.toUpperCase().includes('IGNITION')) {
+            messageText = `🚀 *TREND IGNITION MODE DETECTED!*\n` +
+                          `────────────────────\n` +
+                          `🤖 *Strategy:* TrendIgnitionElite (15m)\n` +
+                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
+                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
+                          `📈 *EMA 9 / 21 Cross:* Bullish Cross Active\n` +
+                          `📊 *Momentum RSI:* ${data.rsi || '55 - 68 zone'}\n` +
+                          `🔍 *Status:* Macro Uptrend breakout confirmed above EMA 50!\n` +
+                          `📦 *Action:* Bot ready to capture momentum runner move.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else {
+            messageText = `🎯 *STRATEGY RADAR ALERT*\n` +
+                          `────────────────────\n` +
+                          `🪙 *Pair:* ${data.pair || 'N/A'}\n` +
+                          `📝 *Details:* ${data.message || JSON.stringify(data, null, 2)}\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        }
+
+        await sock.sendMessage(destination, { text: messageText });
+        console.log(`Mode Alert sent to WhatsApp: ${destination}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error in mode-alert webhook:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Automated Live Strategy Mode Radar (Every 30s checks Binance 5m/15m data for all basket pairs)
+// Prevents duplicate notifications with a 15-minute cooldown per pair/mode
+const lastModeAlertTimes = {};
+
+async function checkStrategyModes() {
+    if (!TARGET_JID || !sock || !isConnected) return;
+
+    const basketPairs = ['SOL/USDT', 'WIF/USDT', 'XRP/USDT', 'ETH/USDT', 'TIA/USDT', 'AAVE/USDT'];
+    const now = Date.now();
+
+    for (const pair of basketPairs) {
+        const symbol = pair.replace('/', '');
+        try {
+            // 1. Check Sweep Mode on 5m timeframe
+            const klines5m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=5m&limit=25`);
+            if (Array.isArray(klines5m) && klines5m.length >= 20) {
+                const last18Lows = klines5m.slice(-19, -1).map(k => parseFloat(k[3]));
+                const swingLow18 = Math.min(...last18Lows);
+                const currentCandle = klines5m[klines5m.length - 1];
+                const currentLow = parseFloat(currentCandle[3]);
+                const currentPrice = parseFloat(currentCandle[4]);
+
+                // Sweep Mode condition: current candle has wicked below the 18-bar swing low
+                const isInSweepMode = currentLow < swingLow18;
+                const sweepKey = `SWEEP_${pair}`;
+                const lastSweepTime = lastModeAlertTimes[sweepKey] || 0;
+
+                if (isInSweepMode && (now - lastSweepTime > 15 * 60 * 1000)) {
+                    lastModeAlertTimes[sweepKey] = now;
+                    const sweepMsg = `⚡ *SWEEP MODE DETECTED!*\n` +
+                                     `────────────────────\n` +
+                                     `🤖 *Strategy:* HighFrequencySweepElite7 (5m)\n` +
+                                     `🪙 *Pair:* *${pair}*\n` +
+                                     `📍 *Current Price:* $${currentPrice}\n` +
+                                     `🛡️ *18-Bar Swing Low:* $${swingLow18}\n` +
+                                     `🔍 *Status:* Candle low ($${currentLow}) has swept below support!\n` +
+                                     `📦 *Action:* Monitoring for reclaim wick & buy execution.\n` +
+                                     `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                    await sock.sendMessage(TARGET_JID, { text: sweepMsg });
+                    console.log(`Automated Sweep Mode alert sent for ${pair}`);
+                }
+            }
+
+            // 2. Check Trend Ignition Mode on 15m timeframe
+            const klines15m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=55`);
+            if (Array.isArray(klines15m) && klines15m.length >= 50) {
+                const closes = klines15m.map(k => parseFloat(k[4]));
+                const lastClose = closes[closes.length - 1];
+                const prevClose = closes[closes.length - 2];
+
+                // Approximate fast EMA 9, EMA 21, EMA 50
+                const ema = (period, arr) => {
+                    const k = 2 / (period + 1);
+                    let val = arr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+                    for (let i = period; i < arr.length; i++) {
+                        val = arr[i] * k + val * (1 - k);
+                    }
+                    return val;
+                };
+
+                const ema9Now = ema(9, closes);
+                const ema21Now = ema(21, closes);
+                const ema50Now = ema(50, closes);
+
+                const ema9Prev = ema(9, closes.slice(0, -1));
+                const ema21Prev = ema(21, closes.slice(0, -1));
+
+                // Trend Ignition Cross condition: EMA 9 crosses above EMA 21 and price above EMA 50
+                const isIgnitionCross = (ema9Now > ema21Now) && (ema9Prev <= ema21Prev) && (lastClose > ema50Now);
+                const ignitionKey = `IGNITION_${pair}`;
+                const lastIgnitionTime = lastModeAlertTimes[ignitionKey] || 0;
+
+                if (isIgnitionCross && (now - lastIgnitionTime > 30 * 60 * 1000)) {
+                    lastModeAlertTimes[ignitionKey] = now;
+                    const ignMsg = `🚀 *TREND IGNITION MODE DETECTED!*\n` +
+                                   `────────────────────\n` +
+                                   `🤖 *Strategy:* TrendIgnitionElite (15m)\n` +
+                                   `🪙 *Pair:* *${pair}*\n` +
+                                   `📍 *Current Price:* $${lastClose}\n` +
+                                   `📈 *EMA 9 / 21:* Bullish Crossover ($${ema9Now.toFixed(4)} > $${ema21Now.toFixed(4)})\n` +
+                                   `🛡️ *Baseline EMA 50:* $${ema50Now.toFixed(4)}\n` +
+                                   `🔍 *Status:* Macro Bullish Trend breakout ignited!\n` +
+                                   `📦 *Action:* Bot ready to capture impulse runner.\n` +
+                                   `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                    await sock.sendMessage(TARGET_JID, { text: ignMsg });
+                    console.log(`Automated Trend Ignition alert sent for ${pair}`);
+                }
+            }
+        } catch (e) {
+            // Ignore transient network errors
+        }
+    }
+}
+
 app.get('/status', (req, res) => {
     res.json({ connected: isConnected, target: TARGET_JID || 'Not set' });
 });
@@ -1240,4 +1602,5 @@ app.listen(BRIDGE_PORT, () => {
     setInterval(checkMorningDigest, 60000);        // Check every minute for 9:00 AM PKT digest
     setInterval(checkCustomPriceAlerts, 20000);    // Check custom price alerts every 20 seconds
     setInterval(checkTradeMilestones, 15000);      // Check trade +1.0% milestones & duration every 15 seconds
+    setInterval(checkStrategyModes, 30000);        // Check sweep mode & ignition mode every 30 seconds
 });
