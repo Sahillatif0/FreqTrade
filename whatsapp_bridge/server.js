@@ -1021,13 +1021,27 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             }
 
             try {
-                // Check if tradeId is valid in open trades
-                const openTrades = await callFreqtradeApi('/status');
-                const targetTrade = Array.isArray(openTrades) ? openTrades.find(t => String(t.trade_id) === String(tradeId)) : null;
+                // Check if tradeId is valid in open trades across both bots
+                const [open1, open2] = await Promise.all([
+                    callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+                ]);
+
+                const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
+                const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2];
+
+                let targetTrade = allOpenTrades.find(t => 
+                    String(t.trade_id) === String(tradeId) || 
+                    t.pair.toLowerCase().replace('/', '') === tradeId.toLowerCase().replace('/', '') ||
+                    t.pair.toLowerCase().startsWith(tradeId.toLowerCase())
+                );
 
                 if (!targetTrade) {
-                    return `⚠️ Active trade #${tradeId} not found. Check active trades with "/status".`;
+                    const activeList = allOpenTrades.map(t => `#${t.trade_id} (${t.pair})`).join(', ');
+                    return `⚠️ Active trade "${tradeId}" not found. Active open trades: ${activeList || 'None'}.\n_Tip: Check "/status" to see active Trade IDs._`;
                 }
+                const actualTradeId = String(targetTrade.trade_id);
 
                 // If user provided a positive percentage e.g. 1.2 or 0.012, make it negative for relative SL
                 if (stoplossValue > 0 && stoplossValue <= 0.20) {
@@ -1051,9 +1065,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 // Update trade stoploss in Freqtrade
                 // Freqtrade REST API: POST /trades/{tradeid}/stoploss or PUT /trades/{tradeid}
-                const res = await callFreqtradeApi(`/trades/${tradeId}/stoploss`, 'POST', payload).catch(async (e) => {
+                const res = await callFreqtradeApi(`/trades/${actualTradeId}/stoploss`, 'POST', payload, targetTrade.botKey).catch(async (e) => {
                     // Fallback to query param or direct trade update
-                    return await callFreqtradeApi(`/trades/${tradeId}`, 'PUT', payload);
+                    return await callFreqtradeApi(`/trades/${actualTradeId}`, 'PUT', payload, targetTrade.botKey);
                 });
 
                 const newPct = (Math.abs(payload.stoploss) * 100).toFixed(2);
@@ -1062,13 +1076,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 return `🛡️ *STOP LOSS UPDATED*\n────────────────────\n` +
                        `🪙 *Pair:* ${targetTrade.pair}\n` +
-                       `🆔 *Trade ID:* #${tradeId}\n` +
+                       `🆔 *Trade ID:* #${actualTradeId}\n` +
                        `🛡️ *New Stop Loss:* *-${newPct}%* (~$${estimatedPrice})\n` +
                        `💵 *Open Rate:* $${openRate}\n` +
                        `⏰ *Time:* ${toKarachiTime(new Date())}\n\n` +
                        `_Freqtrade has adjusted risk for this trade._`;
             } catch (err) {
-                return `⚠️ Failed to update stop loss for trade #${tradeId}: ${err.message}`;
+                return `⚠️ Failed to update stop loss for trade #${actualTradeId}: ${err.message}`;
             }
         }
 
@@ -1089,17 +1103,39 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const actionArg = parts[2].trim().toLowerCase();
 
             try {
-                const openTrades = await callFreqtradeApi('/status');
-                const targetTrade = Array.isArray(openTrades) ? openTrades.find(t => String(t.trade_id) === String(tradeId)) : null;
+                // Check if tradeId is valid in open trades across both bots
+                const [open1, open2] = await Promise.all([
+                    callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+                ]);
 
-                if (!targetTrade) {
-                    return `⚠️ Active trade #${tradeId} not found. Check active trades with "/status".`;
+                const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
+                const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2];
+
+                let targetTrade = allOpenTrades.find(t => 
+                    String(t.trade_id) === String(tradeId) || 
+                    t.pair.toLowerCase().replace('/', '') === tradeId.toLowerCase().replace('/', '') ||
+                    t.pair.toLowerCase().startsWith(tradeId.toLowerCase())
+                );
+
+                // If user passed only [price] when 1 trade is active (e.g. "/tp 0.4140")
+                if (!targetTrade && allOpenTrades.length === 1 && (!isNaN(parseFloat(tradeId)) && isNaN(parseFloat(actionArg)))) {
+                    // tradeId is actually the price, actionArg might be missing or different
+                } else if (!targetTrade && allOpenTrades.length === 1 && isNaN(parseFloat(tradeId)) && !actionArg) {
+                    targetTrade = allOpenTrades[0];
                 }
 
+                if (!targetTrade) {
+                    const activeList = allOpenTrades.map(t => `#${t.trade_id} (${t.pair})`).join(', ');
+                    return `⚠️ Active trade "${tradeId}" not found. Active open trades: ${activeList || 'None'}.\n_Tip: Check "/status" to see active Trade IDs._`;
+                }
+                const actualTradeId = String(targetTrade.trade_id);
+
                 if (actionArg === 'clear' || actionArg === 'reset') {
-                    delete customTakeProfits[tradeId];
+                    delete customTakeProfits[actualTradeId];
                     saveCustomTakeProfits();
-                    return `🎯 Cleared custom take profit for trade #${tradeId}. Reverted to strategy defaults.`;
+                    return `🎯 Cleared custom take profit for trade #${actualTradeId}. Reverted to strategy defaults.`;
                 }
 
                 let rawValue = parts[2].trim().replace('+', '').replace('%', '');
@@ -1117,33 +1153,36 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     if (tpValue <= openRate) {
                         return `⚠️ Target price ($${tpValue}) must be higher than entry price ($${openRate}) for long positions.`;
                     }
-                    customTakeProfits[tradeId] = {
+                    customTakeProfits[actualTradeId] = {
                         pair: targetTrade.pair,
                         targetPrice: tpValue,
                         openRate: openRate,
+                        botKey: targetTrade.botKey,
                         setAt: toKarachiTime(new Date())
                     };
                 } else if (tpValue < 1.0) {
                     // Decimal ratio mode e.g. 0.025 (+2.5%)
-                    customTakeProfits[tradeId] = {
+                    customTakeProfits[actualTradeId] = {
                         pair: targetTrade.pair,
                         targetRatio: tpValue,
                         openRate: openRate,
+                        botKey: targetTrade.botKey,
                         setAt: toKarachiTime(new Date())
                     };
                 } else {
                     // Whole percentage mode e.g. 2.5 meaning +2.5%
-                    customTakeProfits[tradeId] = {
+                    customTakeProfits[actualTradeId] = {
                         pair: targetTrade.pair,
                         targetRatio: tpValue / 100,
                         openRate: openRate,
+                        botKey: targetTrade.botKey,
                         setAt: toKarachiTime(new Date())
                     };
                 }
 
                 saveCustomTakeProfits();
 
-                const ctp = customTakeProfits[tradeId];
+                const ctp = customTakeProfits[actualTradeId];
                 let displayPct = '';
                 let displayPrice = '';
 
@@ -1157,7 +1196,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 return `🎯 *CUSTOM TAKE PROFIT ARMED*\n────────────────────\n` +
                        `🪙 *Pair:* ${targetTrade.pair}\n` +
-                       `🆔 *Trade ID:* #${tradeId}\n` +
+                       `🆔 *Trade ID:* #${actualTradeId}\n` +
                        `🎯 *Take Profit Target:* *${displayPct}* (${displayPrice})\n` +
                        `💵 *Open Rate:* $${openRate}\n` +
                        `📍 *Current Rate:* $${targetTrade.current_rate}\n` +
