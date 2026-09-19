@@ -144,6 +144,54 @@ function toKarachiTime(dateInput) {
     }
 }
 
+// Centralized safe sender: prevents "Waiting for this message" decryption issues
+// by performing onWhatsApp pre-flight handshake and session warmup for proactive outbound alerts.
+async function sendWhatsAppSafe(rawDestination, content) {
+    if (!sock || !isConnected) {
+        console.warn('⚠️ WhatsApp not connected. Message deferred/dropped.');
+        return false;
+    }
+
+    let dest = rawDestination || TARGET_JID;
+    if (!dest) {
+        console.warn('⚠️ No destination JID available for outbound message.');
+        return false;
+    }
+
+    dest = dest.trim();
+
+    // Format destination cleanly
+    let targetJid = dest;
+    if (!targetJid.includes('@')) {
+        targetJid = `${targetJid.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+    } else {
+        targetJid = jidNormalizedUser(targetJid);
+    }
+
+    try {
+        // Pre-flight handshake: warms up Signal keys and verifies session before sending
+        // This eliminates the "Waiting for this message. This may take a while" issue on outbound alerts.
+        if (targetJid.endsWith('@s.whatsapp.net') && typeof sock.onWhatsApp === 'function') {
+            try {
+                const phoneOnly = targetJid.split('@')[0];
+                const [check] = await sock.onWhatsApp(phoneOnly);
+                if (check?.exists && check?.jid) {
+                    targetJid = check.jid;
+                }
+            } catch (err) {
+                // If onWhatsApp check fails or times out, proceed with normalized targetJid
+            }
+        }
+
+        await sock.sendMessage(targetJid, content);
+        return true;
+    } catch (sendErr) {
+        console.error(`Failed to send WhatsApp message to ${targetJid}:`, sendErr.message);
+        return false;
+    }
+}
+
+
 // Helper function to call Freqtrade REST API on specific bot (default: bot1)
 function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1') {
     return new Promise((resolve, reject) => {
@@ -237,7 +285,7 @@ function checkMorningDigest() {
         if (karachiHour === 9 && karachiMinute === 0 && lastDigestDate !== todayStr && TARGET_JID && sock && isConnected) {
             lastDigestDate = todayStr;
             generateDailyDigest().then(msg => {
-                sock.sendMessage(TARGET_JID, { text: msg });
+                sendWhatsAppSafe(TARGET_JID, { text: msg });
                 console.log('Automated 9:00 AM PKT Daily Digest sent to', TARGET_JID);
             }).catch(console.error);
         }
@@ -281,7 +329,7 @@ async function checkCustomPriceAlerts() {
                                          `────────────────────\n` +
                                          `_Alert has been fulfilled and removed._`;
 
-                        await sock.sendMessage(TARGET_JID, { text: alertMsg });
+                        await sendWhatsAppSafe(TARGET_JID, { text: alertMsg });
                         console.log(`Custom Price Alert fulfilled for ${alert.pair} at $${currentPrice}`);
 
                         // Remove triggered alert
@@ -346,7 +394,7 @@ async function checkTradeMilestones() {
                             `⏱️ *Status:* Approaching Take Profit! 🚀\n` +
                             `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                await sock.sendMessage(TARGET_JID, { text: msg });
+                await sendWhatsAppSafe(TARGET_JID, { text: msg });
                 console.log(`Milestone alert sent for trade #${tradeId} (${trade.pair}): +1.0%`);
             }
 
@@ -362,7 +410,7 @@ async function checkTradeMilestones() {
                             `🛡️ *Stop Loss Level:* ${slPrice} (-1.5%)\n` +
                             `⏱️ *Time:* ${toKarachiTime(new Date())}`;
 
-                await sock.sendMessage(TARGET_JID, { text: msg });
+                await sendWhatsAppSafe(TARGET_JID, { text: msg });
                 console.log(`Milestone alert sent for trade #${tradeId} (${trade.pair}): -1.0%`);
             }
 
@@ -379,7 +427,7 @@ async function checkTradeMilestones() {
                                 `💡 _Reminder: If consolidation continues, you can exit manually via "/forcesell ${tradeId}"_\n` +
                                 `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sock.sendMessage(TARGET_JID, { text: msg });
+                    await sendWhatsAppSafe(TARGET_JID, { text: msg });
                 }
             }
 
@@ -411,7 +459,7 @@ async function checkTradeMilestones() {
                                       `🚀 *Action:* Limit/Market exit executed successfully!\n` +
                                       `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                        await sock.sendMessage(TARGET_JID, { text: tpMsg });
+                        await sendWhatsAppSafe(TARGET_JID, { text: tpMsg });
                         console.log(`Automated custom take profit executed for trade #${tradeId} (${trade.pair})`);
                     } catch (exitErr) {
                         console.error(`Failed to execute take profit exit for trade #${tradeId}:`, exitErr.message);
@@ -1424,9 +1472,13 @@ app.post('/trade-alert', async (req, res) => {
                           `${data.message || JSON.stringify(data, null, 2)}`;
         }
 
-        await sock.sendMessage(destination, { text: messageText });
-        console.log(`Alert dispatched to WhatsApp: ${destination}`);
-        res.json({ success: true });
+        const sent = await sendWhatsAppSafe(destination, { text: messageText });
+        if (sent) {
+            console.log(`Alert dispatched to WhatsApp: ${destination}`);
+            res.json({ success: true });
+        } else {
+            res.status(500).json({ error: 'Failed to deliver alert via WhatsApp.' });
+        }
     } catch (err) {
         console.error('Error sending WhatsApp message:', err);
         res.status(500).json({ error: err.message });
@@ -1446,13 +1498,6 @@ app.post('/mode-alert', async (req, res) => {
         let destination = req.query.to || TARGET_JID;
         if (!destination) {
             return res.status(400).json({ error: 'No recipient specified.' });
-        }
-
-        destination = destination.trim();
-        if (!destination.includes('@')) {
-            destination = `${destination.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-        } else {
-            destination = jidNormalizedUser(destination);
         }
 
         const modeType = data.mode || data.type || 'SWEEP'; // 'SWEEP' or 'IGNITION'
@@ -1487,9 +1532,13 @@ app.post('/mode-alert', async (req, res) => {
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         }
 
-        await sock.sendMessage(destination, { text: messageText });
-        console.log(`Mode Alert sent to WhatsApp: ${destination}`);
-        res.json({ success: true });
+        const sent = await sendWhatsAppSafe(destination, { text: messageText });
+        if (sent) {
+            console.log(`Mode Alert sent to WhatsApp: ${destination}`);
+            res.json({ success: true });
+        } else {
+            res.status(500).json({ error: 'Failed to deliver mode alert via WhatsApp.' });
+        }
     } catch (err) {
         console.error('Error in mode-alert webhook:', err);
         res.status(500).json({ error: err.message });
@@ -1535,7 +1584,7 @@ async function checkStrategyModes() {
                                      `📦 *Action:* Monitoring for reclaim wick & buy execution.\n` +
                                      `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sock.sendMessage(TARGET_JID, { text: sweepMsg });
+                    await sendWhatsAppSafe(TARGET_JID, { text: sweepMsg });
                     console.log(`Automated Sweep Mode alert sent for ${pair}`);
                 }
             }
@@ -1582,7 +1631,7 @@ async function checkStrategyModes() {
                                    `📦 *Action:* Bot ready to capture impulse runner.\n` +
                                    `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sock.sendMessage(TARGET_JID, { text: ignMsg });
+                    await sendWhatsAppSafe(TARGET_JID, { text: ignMsg });
                     console.log(`Automated Trend Ignition alert sent for ${pair}`);
                 }
             }
