@@ -812,20 +812,100 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return msg.trim();
         }
 
-        if (cmd === '/daily' || cmd === 'daily') {
-            const data = await callFreqtradeApi('/daily?timescale=7');
-            if (!data.data || data.data.length === 0) {
-                return `⏱️ *DAILY BREAKDOWN*\n────────────────────\nNo daily data available yet.`;
+        if (cmd.startsWith('/daily') || cmd.startsWith('daily')) {
+            const parts = commandText.trim().split(/\s+/);
+            let daysLimit = 7;
+            let targetBot = 'all';
+
+            for (const p of parts.slice(1)) {
+                if (p === '1' || p === 'sweep') targetBot = 'bot1';
+                else if (p === '2' || p === 'ignition') targetBot = 'bot2';
+                else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
-            let msg = `⏱️ *RECENT DAILY PROFITS*\n────────────────────\n`;
-            const fiatCurr = data.fiat_display_currency || 'PKR';
-            data.data.slice(-5).reverse().forEach(d => {
-                const emoji = d.abs_profit >= 0 ? '🟢' : '🔴';
-                const tradesCount = d.trade_count !== undefined ? d.trade_count : (d.trades || 0);
-                const fiatStr = d.fiat_value ? ` (${d.fiat_value.toFixed(0)} ${fiatCurr})` : '';
-                msg += `${emoji} *${d.date}*: ${d.abs_profit?.toFixed(2)} USDT${fiatStr} | ${tradesCount} trades\n`;
-            });
-            return msg.trim();
+
+            try {
+                // Fetch recent closed trades from both bots to accurately compute exact daily PnL
+                let tradesPromises = [];
+                if (targetBot === 'all') {
+                    tradesPromises = [
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot2').catch(() => ({ trades: [] }))
+                    ];
+                } else {
+                    tradesPromises = [
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, targetBot).catch(() => ({ trades: [] }))
+                    ];
+                }
+
+                const results = await Promise.all(tradesPromises);
+                let allTrades = [];
+                results.forEach(res => {
+                    if (Array.isArray(res?.trades)) {
+                        allTrades.push(...res.trades);
+                    }
+                });
+
+                // Group trades by date (Asia/Karachi PKT YYYY-MM-DD)
+                const dailyAgg = {};
+                allTrades.forEach(t => {
+                    const closeTime = t.close_timestamp ? new Date(t.close_timestamp) : (t.close_date ? new Date(t.close_date) : null);
+                    if (!closeTime || isNaN(closeTime.getTime())) return;
+
+                    const dateKey = closeTime.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' }); // YYYY-MM-DD
+                    if (!dailyAgg[dateKey]) {
+                        dailyAgg[dateKey] = {
+                            date: dateKey,
+                            abs_profit: 0,
+                            wins: 0,
+                            losses: 0,
+                            trades: 0
+                        };
+                    }
+                    const profitUsdt = t.close_profit_abs !== undefined ? t.close_profit_abs : (t.profit_amount || 0);
+                    dailyAgg[dateKey].abs_profit += profitUsdt;
+                    dailyAgg[dateKey].trades += 1;
+                    if ((t.close_profit || 0) >= 0) dailyAgg[dateKey].wins += 1;
+                    else dailyAgg[dateKey].losses += 1;
+                });
+
+                const sortedDates = Object.keys(dailyAgg).sort().reverse().slice(0, daysLimit);
+
+                if (sortedDates.length === 0) {
+                    // Fallback to Freqtrade built-in /daily endpoint if no closed trades in memory
+                    const ftDaily = await callFreqtradeApi(`/daily?timescale=${daysLimit}`, 'GET', null, targetBot === 'bot2' ? 'bot2' : 'bot1').catch(() => null);
+                    if (ftDaily?.data && ftDaily.data.length > 0) {
+                        let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${targetBot === 'all' ? 'DUAL BOTS' : targetBot.toUpperCase()})*\n────────────────────\n`;
+                        ftDaily.data.slice(-daysLimit).reverse().forEach(d => {
+                            const emoji = d.abs_profit >= 0 ? '🟢' : '🔴';
+                            const count = d.trade_count !== undefined ? d.trade_count : (d.trades || 0);
+                            msg += `${emoji} *${d.date}*: ${d.abs_profit >= 0 ? '+' : ''}${d.abs_profit.toFixed(2)} USDT | ${count} trades\n`;
+                        });
+                        return msg.trim();
+                    }
+                    return `⏱️ *DAILY BREAKDOWN*\n────────────────────\nNo closed trades recorded in the selected period.`;
+                }
+
+                let totalPeriodProfit = 0;
+                let totalPeriodTrades = 0;
+                let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${targetBot === 'all' ? 'DUAL BOTS' : targetBot.toUpperCase()})*\n────────────────────\n`;
+
+                sortedDates.forEach(date => {
+                    const row = dailyAgg[date];
+                    const emoji = row.abs_profit >= 0 ? '🟢' : '🔴';
+                    const sign = row.abs_profit >= 0 ? '+' : '';
+                    totalPeriodProfit += row.abs_profit;
+                    totalPeriodTrades += row.trades;
+                    msg += `${emoji} *${row.date}*: *${sign}${row.abs_profit.toFixed(2)} USDT* | ${row.trades} trades (${row.wins}W / ${row.losses}L)\n`;
+                });
+
+                msg += `────────────────────\n` +
+                       `💰 *Total (${sortedDates.length} Days):* *${totalPeriodProfit >= 0 ? '+' : ''}${totalPeriodProfit.toFixed(2)} USDT* (${totalPeriodTrades} trades)\n` +
+                       `_Tip: Query specific days or bot, e.g. "/daily 3", "/daily 1", "/daily 2"_`;
+
+                return msg.trim();
+            } catch (err) {
+                return `⚠️ Could not calculate daily breakdown: ${err.message}`;
+            }
         }
 
         if (cmd.startsWith('/stop') || cmd.startsWith('stop')) {
@@ -1584,56 +1664,140 @@ app.post('/mode-alert', async (req, res) => {
     }
 });
 
-// Automated Live Strategy Mode Radar (Every 30s checks Binance 5m/15m data for all basket pairs)
-// Prevents duplicate notifications with a 15-minute cooldown per pair/mode
+// Helper function to calculate standard RSI (Wilder's Smoothing)
+function calculateRSI(closes, period = 14) {
+    if (closes.length < period + 1) return 50;
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= period; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff >= 0) gains += diff;
+        else losses += -diff;
+    }
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    for (let i = period + 1; i < closes.length; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff >= 0) {
+            avgGain = (avgGain * (period - 1) + diff) / period;
+            avgLoss = (avgLoss * (period - 1)) / period;
+        } else {
+            avgGain = (avgGain * (period - 1)) / period;
+            avgLoss = (avgLoss * (period - 1) - diff) / period;
+        }
+    }
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+}
+
+// Automated Full Trade Opportunity Radar (Checks Binance 5m/15m data for all basket pairs every 30s)
+// Evaluates full strategy conditions and inspects wallet balance / open trade slots
 const lastModeAlertTimes = {};
 
 async function checkStrategyModes() {
     if (!TARGET_JID || !sock || !isConnected) return;
 
-    const basketPairs = ['SOL/USDT', 'WIF/USDT', 'XRP/USDT', 'ETH/USDT', 'TIA/USDT', 'AAVE/USDT'];
+    const basketPairs = ['SOL/USDT', 'WIF/USDT', 'XRP/USDT', 'ETH/USDT', 'TIA/USDT', 'AAVE/USDT', 'TAO/USDT', 'NEAR/USDT', 'LINK/USDT'];
     const now = Date.now();
 
     for (const pair of basketPairs) {
         const symbol = pair.replace('/', '');
         try {
-            // 1. Check Sweep Mode on 5m timeframe
-            const klines5m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=5m&limit=25`);
-            if (Array.isArray(klines5m) && klines5m.length >= 20) {
+            // 1. Full Trade Opportunity Check for HighFrequencySweepElite7 (5m)
+            const klines5m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=5m&limit=45`);
+            if (Array.isArray(klines5m) && klines5m.length >= 35) {
                 const last18Lows = klines5m.slice(-19, -1).map(k => parseFloat(k[3]));
                 const swingLow18 = Math.min(...last18Lows);
+
                 const currentCandle = klines5m[klines5m.length - 1];
+                const currentOpen = parseFloat(currentCandle[1]);
+                const currentHigh = parseFloat(currentCandle[2]);
                 const currentLow = parseFloat(currentCandle[3]);
-                const currentPrice = parseFloat(currentCandle[4]);
+                const currentClose = parseFloat(currentCandle[4]);
+                const currentVolume = parseFloat(currentCandle[5]);
 
-                // Sweep Mode condition: current candle has wicked below the 18-bar swing low
-                const isInSweepMode = currentLow < swingLow18;
-                const sweepKey = `SWEEP_${pair}`;
-                const lastSweepTime = lastModeAlertTimes[sweepKey] || 0;
+                // Volume 20 SMA
+                const volumes20 = klines5m.slice(-21, -1).map(k => parseFloat(k[5]));
+                const volumeSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
 
-                if (isInSweepMode && (now - lastSweepTime > 15 * 60 * 1000)) {
-                    lastModeAlertTimes[sweepKey] = now;
-                    const sweepMsg = `⚡ *SWEEP MODE DETECTED!*\n` +
+                // 14-period RSI
+                const closes5m = klines5m.map(k => parseFloat(k[4]));
+                const rsi5m = calculateRSI(closes5m, 14);
+
+                // Candle Mechanics
+                const body = Math.abs(currentClose - currentOpen);
+                const lowerWick = Math.min(currentOpen, currentClose) - currentLow;
+                const upperWick = currentHigh - Math.max(currentOpen, currentClose);
+                const sweepDepth = (swingLow18 - currentLow) / swingLow18;
+
+                // Full Elite7 Strategy Execution Rules:
+                const isFullElite7Opp = (
+                    currentLow < swingLow18 &&                       // Swept support
+                    currentClose > swingLow18 &&                     // Reclaimed support
+                    currentClose > currentOpen &&                    // Bullish close
+                    sweepDepth >= 0.0010 &&                          // Min sweep depth
+                    lowerWick >= (body * 0.8) &&                     // Dominant absorption lower wick
+                    lowerWick >= (upperWick * 1.3) &&                // Bottom wick clearly beats top wick
+                    rsi5m < 36 &&                                    // High-conviction oversold RSI
+                    currentVolume > (volumeSma20 * 0.6)              // Volume participation
+                );
+
+                const eliteKey = `ELITE7_FULL_${pair}`;
+                const lastEliteTime = lastModeAlertTimes[eliteKey] || 0;
+
+                if (isFullElite7Opp && (now - lastEliteTime > 15 * 60 * 1000)) {
+                    lastModeAlertTimes[eliteKey] = now;
+
+                    // Query Bot 1 (Sweep Elite 7) open trades to verify wallet availability
+                    let isWalletFree = true;
+                    let openTradesCount = 0;
+                    try {
+                        const bot1Status = await callFreqtradeApi('/status', 'GET', null, 'bot1');
+                        if (Array.isArray(bot1Status)) {
+                            openTradesCount = bot1Status.length;
+                            if (openTradesCount >= 1) isWalletFree = false;
+                        }
+                    } catch (err) {
+                        // Keep default
+                    }
+
+                    const walletBadge = isWalletFree
+                        ? `✅ *Wallet Status:* Free / Executable`
+                        : `⚠️ *Wallet Status:* Slot Busy (${openTradesCount} Active Trade)`;
+
+                    const actionText = isWalletFree
+                        ? `Order dispatched / executed by Bot 1.`
+                        : `Missed execution due to occupied wallet slot!`;
+
+                    const eliteMsg = `⚡ *FULL TRADE OPPORTUNITY DETECTED!*\n` +
                                      `────────────────────\n` +
                                      `🤖 *Strategy:* HighFrequencySweepElite7 (5m)\n` +
                                      `🪙 *Pair:* *${pair}*\n` +
-                                     `📍 *Current Price:* $${currentPrice}\n` +
+                                     `📍 *Entry Price:* $${currentClose}\n` +
                                      `🛡️ *18-Bar Swing Low:* $${swingLow18}\n` +
-                                     `🔍 *Status:* Candle low ($${currentLow}) has swept below support!\n` +
-                                     `📦 *Action:* Monitoring for reclaim wick & buy execution.\n` +
+                                     `📊 *RSI (14):* ${rsi5m.toFixed(1)} (< 36 Oversold)\n` +
+                                     `🕯️ *Wick Dominance:* Confirmed Reclaim\n` +
+                                     `${walletBadge}\n` +
+                                     `📦 *Action:* ${actionText}\n` +
                                      `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sendWhatsAppSafe(TARGET_JID, { text: sweepMsg });
-                    console.log(`Automated Sweep Mode alert sent for ${pair}`);
+                    await sendWhatsAppSafe(TARGET_JID, { text: eliteMsg });
+                    console.log(`Automated Full Elite7 Opportunity alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
                 }
             }
 
-            // 2. Check Trend Ignition Mode on 15m timeframe
-            const klines15m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=55`);
-            if (Array.isArray(klines15m) && klines15m.length >= 50) {
+            // 2. Full Trade Opportunity Check for TrendIgnitionElite (15m)
+            const klines15m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=65`);
+            if (Array.isArray(klines15m) && klines15m.length >= 55) {
                 const closes = klines15m.map(k => parseFloat(k[4]));
                 const lastClose = closes[closes.length - 1];
                 const prevClose = closes[closes.length - 2];
+                const lastOpen = parseFloat(klines15m[klines15m.length - 1][1]);
+                const lastVolume = parseFloat(klines15m[klines15m.length - 1][5]);
+
+                // Volume 20 SMA
+                const volumes20 = klines15m.slice(-21, -1).map(k => parseFloat(k[5]));
+                const volumeSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
 
                 // Approximate fast EMA 9, EMA 21, EMA 50
                 const ema = (period, arr) => {
@@ -1652,26 +1816,63 @@ async function checkStrategyModes() {
                 const ema9Prev = ema(9, closes.slice(0, -1));
                 const ema21Prev = ema(21, closes.slice(0, -1));
 
-                // Trend Ignition Cross condition: EMA 9 crosses above EMA 21 and price above EMA 50
-                const isIgnitionCross = (ema9Now > ema21Now) && (ema9Prev <= ema21Prev) && (lastClose > ema50Now);
-                const ignitionKey = `IGNITION_${pair}`;
+                // EMA 50 Slope across 4 bars
+                const ema50Prev4 = ema(50, closes.slice(0, -4));
+                const ema50Slope = ((ema50Now - ema50Prev4) / ema50Prev4) * 100;
+
+                const rsi15m = calculateRSI(closes, 14);
+
+                // Trend Ignition Strategy Execution Rules:
+                const isFullIgnitionOpp = (
+                    (ema9Now > ema21Now) && (ema9Prev <= ema21Prev) &&   // EMA 9 crosses over EMA 21
+                    (lastClose > ema50Now) &&                            // Close above EMA 50
+                    (lastClose > lastOpen) &&                            // Bullish green candle
+                    (ema50Slope >= 0.02) &&                              // Bullish macro slope
+                    (rsi15m >= 55 && rsi15m <= 68) &&                    // Momentum sweet spot
+                    (lastVolume > (volumeSma20 * 0.9))                   // Volume participation
+                );
+
+                const ignitionKey = `IGNITION_FULL_${pair}`;
                 const lastIgnitionTime = lastModeAlertTimes[ignitionKey] || 0;
 
-                if (isIgnitionCross && (now - lastIgnitionTime > 30 * 60 * 1000)) {
+                if (isFullIgnitionOpp && (now - lastIgnitionTime > 30 * 60 * 1000)) {
                     lastModeAlertTimes[ignitionKey] = now;
-                    const ignMsg = `🚀 *TREND IGNITION MODE DETECTED!*\n` +
+
+                    // Query Bot 2 (Trend Ignition Elite) open trades to verify wallet availability
+                    let isWalletFree = true;
+                    let openTradesCount = 0;
+                    try {
+                        const bot2Status = await callFreqtradeApi('/status', 'GET', null, 'bot2');
+                        if (Array.isArray(bot2Status)) {
+                            openTradesCount = bot2Status.length;
+                            if (openTradesCount >= 1) isWalletFree = false;
+                        }
+                    } catch (err) {
+                        // Keep default
+                    }
+
+                    const walletBadge = isWalletFree
+                        ? `✅ *Wallet Status:* Free / Executable`
+                        : `⚠️ *Wallet Status:* Slot Busy (${openTradesCount} Active Trade)`;
+
+                    const actionText = isWalletFree
+                        ? `Order dispatched / executed by Bot 2.`
+                        : `Missed execution due to occupied wallet slot!`;
+
+                    const ignMsg = `🚀 *FULL TREND IGNITION OPPORTUNITY!*\n` +
                                    `────────────────────\n` +
                                    `🤖 *Strategy:* TrendIgnitionElite (15m)\n` +
                                    `🪙 *Pair:* *${pair}*\n` +
-                                   `📍 *Current Price:* $${lastClose}\n` +
+                                   `📍 *Entry Price:* $${lastClose}\n` +
                                    `📈 *EMA 9 / 21:* Bullish Crossover ($${ema9Now.toFixed(4)} > $${ema21Now.toFixed(4)})\n` +
-                                   `🛡️ *Baseline EMA 50:* $${ema50Now.toFixed(4)}\n` +
-                                   `🔍 *Status:* Macro Bullish Trend breakout ignited!\n` +
-                                   `📦 *Action:* Bot ready to capture impulse runner.\n` +
+                                   `🛡️ *Baseline EMA 50:* $${ema50Now.toFixed(4)} (Slope: +${ema50Slope.toFixed(3)}%)\n` +
+                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Sweet Spot: 55-68)\n` +
+                                   `${walletBadge}\n` +
+                                   `📦 *Action:* ${actionText}\n` +
                                    `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
                     await sendWhatsAppSafe(TARGET_JID, { text: ignMsg });
-                    console.log(`Automated Trend Ignition alert sent for ${pair}`);
+                    console.log(`Automated Full Trend Ignition alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
                 }
             }
         } catch (e) {
