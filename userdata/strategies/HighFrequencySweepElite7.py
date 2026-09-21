@@ -37,10 +37,10 @@ class HighFrequencySweepElite7(IStrategy):
         "0": 0.025,     # High-conviction runner capture up to +2.5%
         "45": 0.019,    # +1.9% target between 45m - 90m
         "90": 0.013,    # +1.3% target between 1.5h - 3h
-        "180": 0.007    # +0.7% capital rotation floor after 3h
+        "180": 0.007    # Capital rotation floor
     }
 
-    stoploss = -0.015
+    stoploss = -0.015  # Tight SL for clean sweep entries only
     trailing_stop = False
     use_custom_stoploss = False
 
@@ -113,3 +113,43 @@ class HighFrequencySweepElite7(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[:, "exit_long"] = 0
         return dataframe
+
+    def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
+                    current_profit: float, **kwargs):
+        """
+        Preemption Hook:
+        Checks if a higher priority strategy (DonchianPro or TrendIgnition) has requested capital.
+        If yes, exits current scalp trade cleanly to release wallet balance immediately.
+        """
+        try:
+            from portfolio_coordinator import get_state
+            state = get_state()
+            pending = state.get("pending_intent")
+            if pending and pending.get("status") == "WAITING_FOR_BALANCE":
+                if pending.get("priority", 1) > 1:
+                    logger.info(f"[Sweep7] Preempting scalp trade on {pair} for {pending.get('strategy')} ({pending.get('pair')})")
+                    return "preempted_for_high_priority"
+        except Exception as e:
+            logger.warning(f"[Sweep7] Coordinator check error: {e}")
+        return None
+
+    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
+                            time_in_force: str, current_time: datetime, entry_tag: str,
+                            side: str, **kwargs) -> bool:
+        try:
+            from portfolio_coordinator import confirm_entry
+            confirm_entry("HighFrequencySweepElite7", pair)
+        except Exception:
+            pass
+        return True
+
+    def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
+                           rate: float, time_in_force: str, exit_reason: str,
+                           current_time: datetime, **kwargs) -> bool:
+        try:
+            from portfolio_coordinator import release_balance
+            release_balance()
+        except Exception:
+            pass
+        return True
+

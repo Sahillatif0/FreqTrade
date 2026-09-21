@@ -112,6 +112,14 @@ class TrendIgnitionElite(IStrategy):
         dataframe.loc[trend_ignition, "enter_long"] = 1
         dataframe.loc[trend_ignition, "enter_tag"] = "trend_ignition_15m"
 
+        # Preemption Notification: If last candle fired ignition, notify coordinator
+        if len(dataframe) > 0 and bool(dataframe["enter_long"].iloc[-1]):
+            try:
+                from portfolio_coordinator import request_preemption
+                request_preemption("TrendIgnitionElite", metadata.get("pair", ""))
+            except Exception:
+                pass
+
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -128,3 +136,39 @@ class TrendIgnitionElite(IStrategy):
         dataframe.loc[trend_broken, "exit_tag"] = "trend_exhaustion"
 
         return dataframe
+
+    def custom_exit(self, pair: str, trade: 'Trade', current_time, current_rate: float,
+                    current_profit: float, **kwargs):
+        """Preempts for DonchianPro if Donchian has higher priority intent"""
+        try:
+            from portfolio_coordinator import get_state
+            state = get_state()
+            pending = state.get("pending_intent")
+            if pending and pending.get("status") == "WAITING_FOR_BALANCE":
+                if pending.get("priority", 1) > 2:  # Donchian is priority 3
+                    logger.info(f"[TrendIgnition] Preempting for higher priority: {pending.get('strategy')}")
+                    return "preempted_for_donchian"
+        except Exception:
+            pass
+        return None
+
+    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
+                            time_in_force: str, current_time, entry_tag: str,
+                            side: str, **kwargs) -> bool:
+        try:
+            from portfolio_coordinator import confirm_entry
+            confirm_entry("TrendIgnitionElite", pair)
+        except Exception:
+            pass
+        return True
+
+    def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
+                           rate: float, time_in_force: str, exit_reason: str,
+                           current_time, **kwargs) -> bool:
+        try:
+            from portfolio_coordinator import confirm_exit
+            confirm_exit("TrendIgnitionElite", pair)
+        except Exception:
+            pass
+        return True
+

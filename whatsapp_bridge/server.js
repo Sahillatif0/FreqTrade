@@ -36,7 +36,7 @@ app.use(express.json());
 
 const BRIDGE_PORT = 5001;
 
-// Dual-Bot Freqtrade API Server Config
+// Tri-Bot Freqtrade API Server Config
 const FT_BOTS = {
     bot1: {
         id: 1,
@@ -55,8 +55,18 @@ const FT_BOTS = {
         port: 8081,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
+    },
+    bot3: {
+        id: 3,
+        name: 'Range Breakout Donchian Pro',
+        tag: '💎 DONCHIAN PRO',
+        host: '127.0.0.1',
+        port: 8082,
+        username: 'freqtrader',
+        password: process.env.FT_PASSWORD || '724455'
     }
 };
+
 
 const FT_API_HOST = FT_BOTS.bot1.host;
 const FT_API_PORT = FT_BOTS.bot1.port;
@@ -479,42 +489,44 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
     try {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
-            return `🤖 *DUAL BOT COMMAND CENTER*\n` +
+            return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
-                   `📊 */status* - Active open trades across both bots\n` +
-                   `   • */status 1* (Sweep Elite 7) | */status 2* (Trend Ignition)\n` +
+                   `📊 */status* - Active open trades across all 3 bots\n` +
+                   `   • */status 1* (Sweep 7) | */status 2* (Ignition) | */status 3* (Donchian)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
-                   `   • */trades 1* or */trades 2* to filter by bot\n` +
-                   `💰 */profit* - Cumulative profit summary across both bots\n` +
-                   `   • */profit 1* | */profit 2* for single bot breakdown\n` +
+                   `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
+                   `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
+                   `   • */profit 1* | */profit 2* | */profit 3* for single bot breakdown\n` +
                    `⚖️ */balance* - Shared Binance wallet balance & PKR equity\n` +
                    `🎯 */opportunities* - Live sweep radar across whitelist pairs\n` +
                    `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert\n` +
                    `📋 */alerts* - View all active custom price alerts\n` +
                    `🗑️ */clearalerts* - Clear active custom price alerts\n` +
-                   `ℹ️ */info* - Live prices, 15m support/resistance & 24h vol\n` +
+                   `ℹ️ */info* - Live prices, support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
-                   `🛡️ */stoploss [1/2] [id] [pct/price]* - Update stop loss for a trade\n` +
-                   `🎯 */takeprofit [1/2] [id] [pct/price]* - Set custom take profit target\n` +
-                   `🚨 */forcesell [1/2/all] [id]* - Instantly market exit trades\n` +
+                   `🛡️ */stoploss [1/2/3] [id] [pct/price]* - Update stop loss for a trade\n` +
+                   `🎯 */takeprofit [1/2/3] [id] [pct/price]* - Set custom take profit target\n` +
+                   `🚨 */forcesell [1/2/3/all] [id]* - Instantly market exit trades\n` +
                    `📈 */performance* - Performance per trading pair\n` +
                    `⏱️ */daily* - Daily profit breakdown\n` +
                    `🌅 */digest* - Generate full morning digest\n` +
-                   `🔄 */reload [1/2/all]* - Reload bot configs\n` +
-                   `⏸️ */stop [1/2/all]* - Pause trading (stop buying)\n` +
-                   `▶️ */start [1/2/all]* - Resume trading\n` +
-                   `ℹ️ */version* - Strategy & bot version info\n` +
+                   `🔄 */reload [1/2/3/all]* - Reload bot configs\n` +
+                   `⏸️ */stop [1/2/3/all]* - Pause trading (stop buying)\n` +
+                   `▶️ */start [1/2/3/all]* - Resume trading\n` +
+                   `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Both bots trade independently with full balance._`;
+                   `_Tip: Automated Preemption ensures Donchian & Trend get top priority!_`;
         }
+
 
         if (cmd.startsWith('/status') || cmd.startsWith('status')) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -522,6 +534,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     return { bot: b, trades: Array.isArray(data) ? data : [] };
                 })
             );
+
 
             const allTradesCount = results.reduce((acc, r) => acc + r.trades.length, 0);
 
@@ -584,24 +597,28 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             for (let p of parts.slice(1)) {
                 if (p === '1' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'ignition') targetBot = 'bot2';
+                else if (p === '3' || p === 'donchian') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) limit = parseInt(p);
             }
 
             try {
                 let trades = [];
                 if (targetBot === 'all') {
-                    const [t1, t2] = await Promise.all([
+                    const [t1, t2, t3] = await Promise.all([
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot2').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot3').catch(() => ({ trades: [] }))
                     ]);
                     const list1 = (t1.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot1.tag }));
                     const list2 = (t2.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot2.tag }));
-                    trades = [...list1, ...list2].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
+                    const list3 = (t3.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot3.tag }));
+                    trades = [...list1, ...list2, ...list3].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
                 } else {
                     const tData = await callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, targetBot).catch(() => ({ trades: [] }));
                     const bObj = FT_BOTS[targetBot];
                     trades = (tData.trades || []).map(t => ({ ...t, botTag: bObj.tag }));
                 }
+
 
                 if (!trades || trades.length === 0) {
                     return `📜 *EXECUTED OPPORTUNITIES*\n────────────────────\nNo closed trades recorded in history yet.`;
@@ -707,9 +724,10 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -761,7 +779,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             const overallWR = totTrades > 0 ? ((totWins / totTrades) * 100).toFixed(1) : '0.0';
 
-            return `💰 *CUMULATIVE DUAL BOT PROFIT*\n` +
+            return `💰 *CUMULATIVE TRI-BOT PORTFOLIO PROFIT*\n` +
                    `────────────────────\n` +
                    `💵 *Combined Net Profit:* *${totClosedProfit >= 0 ? '+' : ''}${totClosedProfit.toFixed(2)} USDT*\n` +
                    `📊 *Total Closed Trades:* ${totTrades}\n` +
@@ -770,8 +788,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `*Individual Bot Breakdown:*\n` +
                    breakdownText +
                    `────────────────────\n` +
-                   `_Tip: Query individually with "/profit 1" or "/profit 2"_`;
+                   `_Tip: Query individually with "/profit 1", "/profit 2" or "/profit 3"_`;
         }
+
 
         if (cmd === '/balance' || cmd === 'balance') {
             const data = await callFreqtradeApi('/balance');
@@ -1032,7 +1051,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             try {
                 if (targetArg === 'all') {
                     let results = [];
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades)) {
                             for (const trade of openTrades) {
@@ -1043,8 +1062,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     }
                     if (results.length === 0) return `⚠️ No active open trades to sell on any bot.`;
                     return results.join('\n');
-                } else if (targetArg === '1' || targetArg === '2') {
-                    const b = targetArg === '1' ? FT_BOTS.bot1 : FT_BOTS.bot2;
+                } else if (targetArg === '1' || targetArg === '2' || targetArg === '3' || targetArg === 'donchian') {
+                    const b = targetArg === '1' ? FT_BOTS.bot1 : (targetArg === '2' ? FT_BOTS.bot2 : FT_BOTS.bot3);
                     if (specificTradeId) {
                         await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(specificTradeId) }, b);
                         return `🚨 [${b.tag}] Force exit sent for trade #${specificTradeId} at market price!`;
@@ -1061,9 +1080,10 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else {
                     const tradeId = targetArg;
                     let found = false;
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades) && openTrades.some(t => String(t.trade_id) === String(tradeId))) {
+
                             await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(tradeId) }, b);
                             found = true;
                             return `🚨 [${b.tag}] Force exit sent for trade #${tradeId} at market price!`;
@@ -1297,13 +1317,18 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else if (targetArg === '2' || targetArg === 'ignition') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot2');
                     return `🔄 *[${FT_BOTS.bot2.tag}] Config & Pairlist Reloaded Successfully!*`;
+                } else if (targetArg === '3' || targetArg === 'donchian') {
+                    await callFreqtradeApi('/reload_config', 'POST', null, 'bot3');
+                    return `🔄 *[${FT_BOTS.bot3.tag}] Config & Pairlist Reloaded Successfully!*`;
                 } else {
                     await Promise.all([
                         callFreqtradeApi('/reload_config', 'POST', null, 'bot1').catch(() => null),
-                        callFreqtradeApi('/reload_config', 'POST', null, 'bot2').catch(() => null)
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot2').catch(() => null),
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot3').catch(() => null)
                     ]);
-                    return `🔄 *Both Bots Configs Reloaded Successfully!*\nBots updated without restarting.`;
+                    return `🔄 *All 3 Bot Configs Reloaded Successfully!*\nBots updated without restarting.`;
                 }
+
             } catch (err) {
                 return `⚠️ Failed to reload config: ${err.message}`;
             }
@@ -1412,16 +1437,36 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd === '/version' || cmd === 'version') {
-            const [v1, v2] = await Promise.all([
+            const [v1, v2, v3] = await Promise.all([
                 callFreqtradeApi('/version', 'GET', null, 'bot1').catch(() => null),
-                callFreqtradeApi('/version', 'GET', null, 'bot2').catch(() => null)
+                callFreqtradeApi('/version', 'GET', null, 'bot2').catch(() => null),
+                callFreqtradeApi('/version', 'GET', null, 'bot3').catch(() => null)
             ]);
-            return `ℹ️ *DUAL BOT STATUS*\n────────────────────\n` +
+
+            // Also read coordinator portfolio state if available
+            let stateInfo = 'IDLE (No active preemption)';
+            try {
+                const coordStatePath = path.join(__dirname, '..', 'userdata', 'portfolio_state.json');
+                if (fs.existsSync(coordStatePath)) {
+                    const st = JSON.parse(fs.readFileSync(coordStatePath, 'utf8'));
+                    if (st.status === 'BUSY') {
+                        stateInfo = `BUSY (${st.active_strategy || 'Active'} on ${st.active_pair || 'Pair'})`;
+                    } else if (st.pending_intent) {
+                        stateInfo = `WAITING PREEMPTION (${st.pending_intent.strategy} for ${st.pending_intent.pair})`;
+                    }
+                }
+            } catch (e) {}
+
+            return `ℹ️ *TRI-BOT SYSTEM STATUS*\n────────────────────\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
                    `   Strategy: HighFrequencySweepElite7 (5m Scalp)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: TrendIgnitionElite (15m Runner)`;
+                   `   Strategy: TrendIgnitionElite (15m Runner)\n\n` +
+                   `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
+                   `   Strategy: RangeBreakoutDonchianPro (1h Breakout)\n\n` +
+                   `⚡ *Coordinator State:* ${stateInfo}`;
         }
+
 
         return null; // unrecognized message, ignore
     } catch (error) {
@@ -1664,8 +1709,60 @@ app.post('/mode-alert', async (req, res) => {
     }
 });
 
+// Webhook endpoint to receive Preemption / Capital Handshake alerts from Portfolio Coordinator
+app.post('/preemption-alert', async (req, res) => {
+    try {
+        const data = req.body;
+        console.log('Received Preemption Alert:', JSON.stringify(data));
+
+        if (!sock || !isConnected) {
+            return res.status(503).json({ error: 'WhatsApp not connected yet.' });
+        }
+
+        let destination = req.query.to || TARGET_JID;
+        if (!destination) {
+            return res.status(400).json({ error: 'No recipient specified.' });
+        }
+
+        let messageText = '';
+        if (data.event === 'PREEMPTION_REQUESTED') {
+            const inStrat = data.incoming_strategy || 'RangeBreakoutDonchianPro';
+            const curStrat = data.current_strategy || 'HighFrequencySweepElite7';
+            messageText = `⚡ *PORTFOLIO PREEMPTION TRIGGERED!*\n` +
+                          `────────────────────\n` +
+                          `🎯 *High-Value Signal:* *${data.incoming_pair}* [${inStrat}]\n` +
+                          `🚪 *Preempting Slot:* *${data.current_pair || 'Active Slot'}* [${curStrat}]\n` +
+                          `⚖️ *Action:* Coordinator requesting safe exit to release wallet capital!\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (data.event === 'BALANCE_RELEASED') {
+            const inStrat = data.incoming_strategy || 'RangeBreakoutDonchianPro';
+            const relStrat = data.released_from_strategy || 'Sweep';
+            messageText = `✅ *CAPITAL RELEASED FOR EXECUTION!*\n` +
+                          `────────────────────\n` +
+                          `🪙 *Released From:* [${relStrat}] (${data.released_from_pair || 'Scalp'})\n` +
+                          `🚀 *Assigned To:* [${inStrat}] (*${data.incoming_pair}*)\n` +
+                          `💰 *Wallet Status:* Free / Full Stake Handshake Complete\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else {
+            messageText = `⚡ *PREEMPTION UPDATE*\n────────────────────\n${JSON.stringify(data, null, 2)}`;
+        }
+
+        const sent = await sendWhatsAppSafe(destination, { text: messageText });
+        if (sent) {
+            console.log(`Preemption alert sent to WhatsApp: ${destination}`);
+            res.json({ success: true });
+        } else {
+            res.status(500).json({ error: 'Failed to deliver preemption alert.' });
+        }
+    } catch (err) {
+        console.error('Error in preemption-alert endpoint:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Helper function to calculate standard RSI (Wilder's Smoothing)
 function calculateRSI(closes, period = 14) {
+
     if (closes.length < period + 1) return 50;
     let gains = 0, losses = 0;
     for (let i = 1; i <= period; i++) {
@@ -1875,9 +1972,75 @@ async function checkStrategyModes() {
                     console.log(`Automated Full Trend Ignition alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
                 }
             }
+
+            // 3. Full Trade Opportunity Check for RangeBreakoutDonchianPro (1h)
+            const klines1h = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=55`);
+            if (Array.isArray(klines1h) && klines1h.length >= 30) {
+                const closes = klines1h.map(k => parseFloat(k[4]));
+                const highs = klines1h.map(k => parseFloat(k[2]));
+                const lows = klines1h.map(k => parseFloat(k[3]));
+                const lastClose = closes[closes.length - 1];
+                const lastOpen = parseFloat(klines1h[klines1h.length - 1][1]);
+                const lastHigh = highs[highs.length - 1];
+                const lastLow = lows[lows.length - 1];
+                const lastVol = parseFloat(klines1h[klines1h.length - 1][5]);
+
+                // 24-hour high/low (previous 24 completed 1h candles)
+                const rangeHigh24 = Math.max(...highs.slice(-25, -1));
+                const candleRange = lastHigh - lastLow;
+                const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+                const closePosition = (lastClose - lastLow) / (candleRange + 1e-8);
+
+                // Volume 20 SMA
+                const volumes20 = klines1h.slice(-21, -1).map(k => parseFloat(k[5]));
+                const volSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
+
+                const rsi1h = calculateRSI(closes, 14);
+
+                const isDonchianBreakout = (
+                    (lastClose > rangeHigh24) &&
+                    (lastClose > lastOpen) &&
+                    (lastVol > volSma20 * 1.7) &&
+                    (closePosition >= 0.65) &&
+                    (upperWick <= candleRange * 0.30) &&
+                    (rsi1h >= 54 && rsi1h <= 78)
+                );
+
+                const donchianKey = `DONCHIAN_FULL_${pair}`;
+                const lastDonchianTime = lastModeAlertTimes[donchianKey] || 0;
+
+                if (isDonchianBreakout && (now - lastDonchianTime > 60 * 60 * 1000)) {
+                    lastModeAlertTimes[donchianKey] = now;
+
+                    let isWalletFree = true;
+                    let openTradesCount = 0;
+                    try {
+                        const bot3Status = await callFreqtradeApi('/status', 'GET', null, 'bot3');
+                        if (Array.isArray(bot3Status)) {
+                            openTradesCount = bot3Status.length;
+                            if (openTradesCount >= 1) isWalletFree = false;
+                        }
+                    } catch (err) {}
+
+                    const donchianMsg = `💎 *DONCHIAN PRO BREAKOUT DETECTED!*\n` +
+                                       `────────────────────\n` +
+                                       `🤖 *Strategy:* RangeBreakoutDonchianPro (1h)\n` +
+                                       `🪙 *Pair:* *${pair}*\n` +
+                                       `📍 *Breakout Price:* $${lastClose}\n` +
+                                       `🏔️ *24h Range High:* $${rangeHigh24}\n` +
+                                       `📊 *RSI (14):* ${rsi1h.toFixed(1)} (Bullish Momentum)\n` +
+                                       `🔥 *Volume Surge:* ${(lastVol / (volSma20 || 1)).toFixed(1)}x of 20-SMA\n` +
+                                       `⚡ *Priority:* High Priority (Triggers Auto-Preemption if needed)\n` +
+                                       `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                    await sendWhatsAppSafe(TARGET_JID, { text: donchianMsg });
+                    console.log(`Automated Donchian Pro Breakout alert sent for ${pair}`);
+                }
+            }
         } catch (e) {
             // Ignore transient network errors
         }
+
     }
 }
 
