@@ -1,4 +1,5 @@
 import logging
+logger = logging.getLogger(__name__)
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -44,13 +45,17 @@ class HighFrequencySweepElite7(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.025,     # High-conviction runner capture up to +2.5%
-        "45": 0.019,    # +1.9% target between 45m - 90m
-        "90": 0.013,    # +1.3% target between 1.5h - 3h
-        "180": 0.007    # Capital rotation floor
+        "0": 0.025,
+        "30": 0.021,
+        "45": 0.019,
+        "60": 0.015,
+        "75": 0.012,
+        "90": 0.010,
+        "120": 0.009,
+        "180": 0.007
     }
 
-    stoploss = -0.015  # Tight SL for clean sweep entries only
+    stoploss = -0.015  # Strict 1.5% SL
     trailing_stop = False
     use_custom_stoploss = False
 
@@ -103,7 +108,7 @@ class HighFrequencySweepElite7(IStrategy):
         dataframe.loc[:, "enter_long"] = 0
         dataframe.loc[:, "enter_tag"] = ""
 
-        # Dominant Absorption Liquidity Sweep
+        # Dominant Absorption Liquidity Sweep (Original)
         sweep_entry = (
             (dataframe["low"] < dataframe["range_low_18"]) &
             (dataframe["close"] > dataframe["range_low_18"]) &
@@ -142,6 +147,23 @@ class HighFrequencySweepElite7(IStrategy):
             except Exception as e:
                 logger.warning(f"[Sweep7] Coordinator check error: {e}")
         return None
+
+    def custom_entry_price(self, pair: str, current_time: datetime, proposed_rate: float,
+                           entry_tag: str, side: str, **kwargs) -> float:
+        """
+        Pullback Optimization:
+        Rather than buying at the very peak of the 5m close bounce, place a limit order
+        at a 0.15% discount (re-test of the sweep absorption) to get superior fill price,
+        avoid instant post-entry drawdown, and hit ROI targets much faster.
+        """
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if dataframe is not None and not dataframe.empty:
+            last_candle = dataframe.iloc[-1]
+            # Target 25% into the lower wick
+            wick_entry = last_candle['close'] - (last_candle['lower_wick'] * 0.25)
+            if wick_entry < proposed_rate:
+                return wick_entry
+        return proposed_rate
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, entry_tag: str,
