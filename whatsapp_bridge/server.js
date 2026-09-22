@@ -2023,6 +2023,8 @@ app.post('/mode-alert', async (req, res) => {
     }
 });
 
+let lastPreemptionTimes = {};
+
 // Webhook endpoint to receive Preemption / Capital Handshake alerts from Portfolio Coordinator
 app.post('/preemption-alert', async (req, res) => {
     try {
@@ -2037,6 +2039,15 @@ app.post('/preemption-alert', async (req, res) => {
         if (!destination) {
             return res.status(400).json({ error: 'No recipient specified.' });
         }
+
+        // Debounce filter: Ignore duplicate preemption alerts within 10 minutes for the same pair
+        const pairKey = `${data.event}_${data.incoming_pair || data.pair || 'global'}`;
+        const now = Date.now();
+        if (lastPreemptionTimes[pairKey] && (now - lastPreemptionTimes[pairKey]) < 10 * 60 * 1000) {
+            console.log(`Suppressed duplicate preemption alert for ${pairKey} (cooldown active).`);
+            return res.json({ success: true, note: 'Suppressed duplicate alert within cooldown.' });
+        }
+        lastPreemptionTimes[pairKey] = now;
 
         let messageText = '';
         if (data.event === 'PREEMPTION_REQUESTED') {

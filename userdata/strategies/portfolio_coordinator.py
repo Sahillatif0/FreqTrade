@@ -89,22 +89,33 @@ def request_preemption(strategy_name: str, pair: str) -> None:
     current_strat = state.get("active_strategy")
     current_priority = PRIORITY.get(current_strat, 0) if current_strat else 0
     
-    if strat_priority > current_priority:
-        state["pending_intent"] = {
-            "strategy": strategy_name,
-            "pair": pair,
-            "priority": strat_priority,
-            "requested_at": time.time(),
-            "status": "WAITING_FOR_BALANCE"
-        }
-        set_state(state)
-        logger.info(f"[Coordinator] Preemption requested by {strategy_name} ({pair}) against {current_strat}")
-        notify_whatsapp("PREEMPTION_REQUESTED", {
-            "incoming_strategy": strategy_name,
-            "incoming_pair": pair,
-            "current_strategy": current_strat,
-            "current_pair": state.get("active_pair")
-        })
+    # Preemption ONLY makes sense if another lower-priority strategy is ACTUALLY active and holding capital!
+    if not current_strat or strat_priority <= current_priority:
+        return
+
+    # Check if we already have an active pending intent for this strategy and pair (prevent 4-second loop spam)
+    existing_intent = state.get("pending_intent")
+    if existing_intent:
+        if existing_intent.get("strategy") == strategy_name and existing_intent.get("pair") == pair:
+            # Already requested, check cooldown (e.g. at least 15 minutes before re-notifying)
+            if time.time() - existing_intent.get("requested_at", 0) < 900:
+                return
+
+    state["pending_intent"] = {
+        "strategy": strategy_name,
+        "pair": pair,
+        "priority": strat_priority,
+        "requested_at": time.time(),
+        "status": "WAITING_FOR_BALANCE"
+    }
+    set_state(state)
+    logger.info(f"[Coordinator] Preemption requested by {strategy_name} ({pair}) against {current_strat}")
+    notify_whatsapp("PREEMPTION_REQUESTED", {
+        "incoming_strategy": strategy_name,
+        "incoming_pair": pair,
+        "current_strategy": current_strat,
+        "current_pair": state.get("active_pair")
+    })
 
 def release_balance() -> None:
     state = get_state()
