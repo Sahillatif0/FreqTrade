@@ -5,7 +5,18 @@ from pandas import DataFrame
 import talib.abstract as ta
 from freqtrade.strategy import IStrategy
 
-logger = logging.getLogger(__name__)
+import sys
+import os
+_strat_dir = os.path.dirname(os.path.abspath(__file__))
+if _strat_dir not in sys.path:
+    sys.path.insert(0, _strat_dir)
+
+try:
+    import portfolio_coordinator as pc
+    logger.info("[DonchianPro] portfolio_coordinator loaded successfully.")
+except Exception as e:
+    logger.warning(f"[DonchianPro] Could not load portfolio_coordinator: {e}")
+    pc = None
 
 class RangeBreakoutDonchianPro(IStrategy):
     """
@@ -100,11 +111,11 @@ class RangeBreakoutDonchianPro(IStrategy):
 
         # Preemption Notification: If last candle fired breakout, notify coordinator
         if len(dataframe) > 0 and bool(dataframe["enter_long"].iloc[-1]):
-            try:
-                from portfolio_coordinator import request_preemption
-                request_preemption("RangeBreakoutDonchianPro", metadata.get("pair", ""))
-            except Exception:
-                pass
+            if pc:
+                try:
+                    pc.request_preemption("RangeBreakoutDonchianPro", metadata.get("pair", ""))
+                except Exception as e:
+                    logger.warning(f"[DonchianPro] Preemption request error: {e}")
 
         return dataframe
 
@@ -125,20 +136,20 @@ class RangeBreakoutDonchianPro(IStrategy):
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time, entry_tag: str,
                             side: str, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import confirm_entry
-            confirm_entry("RangeBreakoutDonchianPro", pair)
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.confirm_entry("RangeBreakoutDonchianPro", pair)
+            except Exception as e:
+                logger.warning(f"[DonchianPro] Confirm entry error: {e}")
         return True
 
     def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import confirm_exit
-            confirm_exit("RangeBreakoutDonchianPro", pair)
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.confirm_exit("RangeBreakoutDonchianPro", pair)
+            except Exception as e:
+                logger.warning(f"[DonchianPro] Confirm exit error: {e}")
         return True
 

@@ -5,8 +5,18 @@ from pandas import DataFrame
 from datetime import datetime
 import talib.abstract as ta
 from freqtrade.strategy import IStrategy
+import sys
+import os
+_strat_dir = os.path.dirname(os.path.abspath(__file__))
+if _strat_dir not in sys.path:
+    sys.path.insert(0, _strat_dir)
 
-logger = logging.getLogger(__name__)
+try:
+    import portfolio_coordinator as pc
+    logger.info("[SweepElite7] portfolio_coordinator loaded successfully.")
+except Exception as e:
+    logger.warning(f"[SweepElite7] Could not load portfolio_coordinator: {e}")
+    pc = None
 
 class HighFrequencySweepElite7(IStrategy):
     """
@@ -121,35 +131,35 @@ class HighFrequencySweepElite7(IStrategy):
         Checks if a higher priority strategy (DonchianPro or TrendIgnition) has requested capital.
         If yes, exits current scalp trade cleanly to release wallet balance immediately.
         """
-        try:
-            from portfolio_coordinator import get_state
-            state = get_state()
-            pending = state.get("pending_intent")
-            if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                if pending.get("priority", 1) > 1:
-                    logger.info(f"[Sweep7] Preempting scalp trade on {pair} for {pending.get('strategy')} ({pending.get('pair')})")
-                    return "preempted_for_high_priority"
-        except Exception as e:
-            logger.warning(f"[Sweep7] Coordinator check error: {e}")
+        if pc:
+            try:
+                state = pc.get_state()
+                pending = state.get("pending_intent")
+                if pending and pending.get("status") == "WAITING_FOR_BALANCE":
+                    if pending.get("priority", 1) > 1:
+                        logger.info(f"[Sweep7] Preempting scalp trade on {pair} for {pending.get('strategy')} ({pending.get('pair')})")
+                        return "preempted_for_high_priority"
+            except Exception as e:
+                logger.warning(f"[Sweep7] Coordinator check error: {e}")
         return None
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, entry_tag: str,
                             side: str, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import confirm_entry
-            confirm_entry("HighFrequencySweepElite7", pair)
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.confirm_entry("HighFrequencySweepElite7", pair)
+            except Exception as e:
+                logger.warning(f"[Sweep7] Coordinator entry confirm error: {e}")
         return True
 
     def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import release_balance
-            release_balance()
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.release_balance()
+            except Exception as e:
+                logger.warning(f"[Sweep7] Coordinator release error: {e}")
         return True
 

@@ -36,9 +36,31 @@ app.use(express.json());
 
 const BRIDGE_PORT = 5001;
 
-// Tri-Bot Freqtrade API Server Config
+// Helper to auto-load bot API credentials from userdata/config_bot*.json if present
+function loadBotConfig(configFile, defaults) {
+    const configPath = path.join(__dirname, '..', 'userdata', configFile);
+    if (fs.existsSync(configPath)) {
+        try {
+            const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (raw.api_server) {
+                return {
+                    ...defaults,
+                    host: (raw.api_server.listen_ip_address === '0.0.0.0' || !raw.api_server.listen_ip_address) ? '127.0.0.1' : raw.api_server.listen_ip_address,
+                    port: raw.api_server.listen_port || defaults.port,
+                    username: raw.api_server.username || defaults.username,
+                    password: raw.api_server.password || defaults.password
+                };
+            }
+        } catch (e) {
+            console.warn(`[ConfigLoader] Could not parse ${configFile}: ${e.message}`);
+        }
+    }
+    return defaults;
+}
+
+// Tri-Bot Freqtrade API Server Config with auto-detection from config files
 const FT_BOTS = {
-    bot1: {
+    bot1: loadBotConfig('config_bot1_sweep.json', {
         id: 1,
         name: 'Sweep Elite 7',
         tag: '⚡ SWEEP ELITE 7',
@@ -46,8 +68,8 @@ const FT_BOTS = {
         port: 8080,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
-    },
-    bot2: {
+    }),
+    bot2: loadBotConfig('config_bot2_ignition.json', {
         id: 2,
         name: 'Trend Ignition Elite',
         tag: '🚀 TREND IGNITION ELITE',
@@ -55,8 +77,8 @@ const FT_BOTS = {
         port: 8081,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
-    },
-    bot3: {
+    }),
+    bot3: loadBotConfig('config_bot3_donchian.json', {
         id: 3,
         name: 'Range Breakout Donchian Pro',
         tag: '💎 DONCHIAN PRO',
@@ -64,9 +86,14 @@ const FT_BOTS = {
         port: 8082,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
-    }
+    })
 };
 
+console.log('[Bridge Config] Loaded bot ports:', {
+    bot1: `${FT_BOTS.bot1.host}:${FT_BOTS.bot1.port} (${FT_BOTS.bot1.username})`,
+    bot2: `${FT_BOTS.bot2.host}:${FT_BOTS.bot2.port} (${FT_BOTS.bot2.username})`,
+    bot3: `${FT_BOTS.bot3.host}:${FT_BOTS.bot3.port} (${FT_BOTS.bot3.username})`
+});
 
 const FT_API_HOST = FT_BOTS.bot1.host;
 const FT_API_PORT = FT_BOTS.bot1.port;
@@ -116,6 +143,57 @@ function saveCustomTakeProfits() {
     } catch (e) {
         console.error('Error saving custom take profits:', e.message);
     }
+}
+
+const SL_FILE = path.join(__dirname, 'custom_stoplosses.json');
+// In-memory & disk-backed custom stop loss targets per trade: { [tradeId]: { targetRatio, targetPrice, pair, botKey } }
+let customStopLosses = {};
+if (fs.existsSync(SL_FILE)) {
+    try {
+        customStopLosses = JSON.parse(fs.readFileSync(SL_FILE, 'utf8'));
+    } catch (e) {
+        customStopLosses = {};
+    }
+}
+
+function saveCustomStopLosses() {
+    try {
+        fs.writeFileSync(SL_FILE, JSON.stringify(customStopLosses, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Error saving custom stop losses:', e.message);
+    }
+}
+
+// Strategy minimal_roi configuration tables for time-decayed Take Profit
+const STRATEGY_ROI_TABLES = {
+    bot1: [ // SweepElite7 (5m): {"0": 0.025, "45": 0.019, "90": 0.013, "180": 0.007}
+        { min: 180, roi: 0.007 },
+        { min: 90,  roi: 0.013 },
+        { min: 45,  roi: 0.019 },
+        { min: 0,   roi: 0.025 }
+    ],
+    bot2: [ // TrendIgnitionElite (15m): {"0": 0.028, "30": 0.019, "75": 0.013, "150": 0.008}
+        { min: 150, roi: 0.008 },
+        { min: 75,  roi: 0.013 },
+        { min: 30,  roi: 0.019 },
+        { min: 0,   roi: 0.028 }
+    ],
+    bot3: [ // RangeBreakoutDonchianPro (1h): {"0": 0.048, "120": 0.035, "240": 0.025, "480": 0.015}
+        { min: 480, roi: 0.015 },
+        { min: 240, roi: 0.025 },
+        { min: 120, roi: 0.035 },
+        { min: 0,   roi: 0.048 }
+    ]
+};
+
+function getActiveStrategyRoi(botKey, elapsedMinutes) {
+    const table = STRATEGY_ROI_TABLES[botKey] || STRATEGY_ROI_TABLES.bot1;
+    for (const step of table) {
+        if (elapsedMinutes >= step.min) {
+            return step.roi;
+        }
+    }
+    return table[table.length - 1].roi;
 }
 
 // Track trade profit milestones to prevent duplicate milestone notifications
@@ -216,26 +294,45 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1'
                 'Authorization': auth,
                 'Content-Type': 'application/json'
             },
-            timeout: 5000
+            timeout: 6000
         };
 
         const req = http.request(options, (res) => {
             let responseData = '';
             res.on('data', chunk => responseData += chunk);
             res.on('end', () => {
+                let parsed = null;
                 try {
-                    const parsed = JSON.parse(responseData);
-                    resolve(parsed);
+                    parsed = JSON.parse(responseData);
                 } catch (e) {
-                    resolve(responseData);
+                    parsed = responseData;
                 }
+
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    const detail = (parsed && typeof parsed === 'object' && parsed.detail) ? parsed.detail : (typeof parsed === 'string' ? parsed : `HTTP ${res.statusCode}`);
+                    const err = new Error(`[${bot.name} :${bot.port}] ${res.statusCode} ${detail}`);
+                    err.statusCode = res.statusCode;
+                    err.bot = bot;
+                    console.error(`[API ERROR] ${bot.name} (port ${bot.port}) ${method} ${endpoint} returned HTTP ${res.statusCode}: ${detail}`);
+                    return reject(err);
+                }
+
+                resolve(parsed);
             });
         });
 
-        req.on('error', (err) => reject(err));
+        req.on('error', (err) => {
+            const connectErr = new Error(`[${bot.name} :${bot.port}] Connection Failed: ${err.message}`);
+            connectErr.bot = bot;
+            console.error(`[API CONNECT ERROR] ${bot.name} (port ${bot.port}) ${endpoint}: ${err.message}`);
+            reject(connectErr);
+        });
+
         req.on('timeout', () => {
             req.destroy();
-            reject(new Error(`Freqtrade API timeout on ${bot.name} (port ${bot.port})`));
+            const timeoutErr = new Error(`[${bot.name} :${bot.port}] Request timed out`);
+            timeoutErr.bot = bot;
+            reject(timeoutErr);
         });
 
         if (body) {
@@ -245,39 +342,60 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1'
     });
 }
 
-// Generate full daily morning digest
+// Generate full daily morning digest across all 3 bots
 async function generateDailyDigest() {
     try {
-        const [profit, balance, status, fng, btcTicker] = await Promise.all([
-            callFreqtradeApi('/profit').catch(() => ({})),
-            callFreqtradeApi('/balance').catch(() => ({})),
-            callFreqtradeApi('/status').catch(() => ([])),
+        const [p1, p2, p3, balance, s1, s2, s3, fng, btcTicker] = await Promise.all([
+            callFreqtradeApi('/profit', 'GET', null, 'bot1').catch(() => ({})),
+            callFreqtradeApi('/profit', 'GET', null, 'bot2').catch(() => ({})),
+            callFreqtradeApi('/profit', 'GET', null, 'bot3').catch(() => ({})),
+            callFreqtradeApi('/balance', 'GET', null, 'bot1').catch(async () => {
+                return await callFreqtradeApi('/balance', 'GET', null, 'bot2').catch(() => ({}));
+            }),
+            callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => ([])),
+            callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => ([])),
+            callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => ([])),
             fetchHttpsJson('https://api.alternative.me/fng/?limit=1').catch(() => null),
             fetchHttpsJson('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT').catch(() => null)
         ]);
 
         const totalEquity = balance.total ? balance.total.toFixed(2) : 'N/A';
         const pkrVal = balance.value ? Number(balance.value).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
-        const winRate = profit.winrate !== undefined ? (profit.winrate * 100).toFixed(1) : (((profit.winning_trades || 0) / ((profit.closed_trade_count || 1))) * 100).toFixed(1);
-        const closedProfit = profit.profit_closed_coin?.toFixed(2) || '0.00';
-        const openCount = Array.isArray(status) ? status.length : 0;
+
+        const totalProfitUSDT = (
+            (p1.profit_closed_coin || 0) +
+            (p2.profit_closed_coin || 0) +
+            (p3.profit_closed_coin || 0)
+        ).toFixed(2);
+
+        const totalWins = (p1.winning_trades || 0) + (p2.winning_trades || 0) + (p3.winning_trades || 0);
+        const totalLosses = (p1.losing_trades || 0) + (p2.losing_trades || 0) + (p3.losing_trades || 0);
+        const totalClosed = totalWins + totalLosses;
+        const winRate = totalClosed > 0 ? ((totalWins / totalClosed) * 100).toFixed(1) : '100.0';
+
+        const openCount = (Array.isArray(s1) ? s1.length : 0) +
+                          (Array.isArray(s2) ? s2.length : 0) +
+                          (Array.isArray(s3) ? s3.length : 0);
 
         const fngVal = fng?.data?.[0]?.value || 'N/A';
         const fngClass = fng?.data?.[0]?.value_classification || 'Neutral';
         const btcPrice = btcTicker?.lastPrice ? parseFloat(btcTicker.lastPrice).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
         const btcChange = btcTicker?.priceChangePercent ? parseFloat(btcTicker.priceChangePercent).toFixed(2) : '0.00';
 
-        return `🌅 *DAILY TRADING DIGEST*\n` +
+        return `🌅 *DAILY TRADING DIGEST (3-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
-               `💰 *Closed PnL:* ${closedProfit} USDT\n` +
-               `🏆 *Win Rate:* ${winRate}% (${profit.winning_trades || 0}W / ${profit.losing_trades || 0}L)\n` +
+               `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
+               `   • Sweep 7: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Ignition: ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Donchian: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
-               `📊 *Open Trades:* ${openCount} / 1\n` +
+               `📊 *Active Trades:* ${openCount} open\n` +
                `🪙 *Bitcoin:* $${btcPrice} (${btcChange >= 0 ? '+' : ''}${btcChange}%)\n` +
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_HighFrequencySweepElite active & scanning!_ 🚀`;
+               `_Sweep (5m), Ignition (15m) & Donchian (1h) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -361,14 +479,16 @@ async function checkTradeMilestones() {
     if (!TARGET_JID || !sock || !isConnected) return;
 
     try {
-        const [open1, open2] = await Promise.all([
+        const [open1, open2, open3] = await Promise.all([
             callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
-            callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+            callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
+            callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
         ]);
 
         const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
         const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
-        const openTrades = [...tagged1, ...tagged2];
+        const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
+        const openTrades = [...tagged1, ...tagged2, ...tagged3];
 
         if (openTrades.length === 0) return;
 
@@ -441,7 +561,46 @@ async function checkTradeMilestones() {
                 }
             }
 
-            // Automated Custom Take Profit Execution Check
+            // 1. Automated Custom Stop Loss Execution Check
+            if (customStopLosses[tradeId]) {
+                const sl = customStopLosses[tradeId];
+                let shouldStopLoss = false;
+
+                if (sl.targetPrice && currentRate <= sl.targetPrice) {
+                    shouldStopLoss = true;
+                } else if (sl.targetRatio && pnlRatio <= sl.targetRatio) {
+                    shouldStopLoss = true;
+                }
+
+                if (shouldStopLoss) {
+                    delete customStopLosses[tradeId];
+                    saveCustomStopLosses();
+
+                    try {
+                        const exitPayload = { tradeid: String(tradeId), ordertype: 'market' };
+                        await callFreqtradeApi('/forceexit', 'POST', exitPayload, trade.botKey)
+                            .catch(async () => await callFreqtradeApi('/forcesell', 'POST', exitPayload, trade.botKey));
+
+                        const slMsg = `🛡️ *CUSTOM STOP LOSS TRIGGERED!*\n` +
+                                      `────────────────────\n` +
+                                      `🤖 *Bot:* ${trade.botTag}\n` +
+                                      `🪙 *Pair:* ${trade.pair}\n` +
+                                      `🆔 *Trade ID:* #${tradeId}\n` +
+                                      `📉 *Locked PnL:* *${pnlPct}%*\n` +
+                                      `💵 *Exit Price:* $${currentRate}\n` +
+                                      `🛡️ *SL Level:* $${sl.targetPrice ? sl.targetPrice : (openRate * (1 + sl.targetRatio)).toFixed(4)}\n` +
+                                      `🚨 *Action:* Market stop loss executed instantly!\n` +
+                                      `⏰ *Time:* ${toKarachiTime(new Date())}`;
+
+                        await sendWhatsAppSafe(TARGET_JID, { text: slMsg });
+                        console.log(`[SL Executed] Trade #${tradeId} (${trade.pair}) stop loss hit at $${currentRate}`);
+                    } catch (exitErr) {
+                        console.error(`Failed to execute stop loss for trade #${tradeId}:`, exitErr.message);
+                    }
+                }
+            }
+
+            // 2. Automated Custom Take Profit Execution Check
             if (customTakeProfits[tradeId]) {
                 const target = customTakeProfits[tradeId];
                 let shouldTakeProfit = false;
@@ -457,8 +616,11 @@ async function checkTradeMilestones() {
                     saveCustomTakeProfits();
 
                     try {
-                        await callFreqtradeApi('/forcesell', 'POST', { tradeid: tradeId }, trade.botKey);
-                        const tpMsg = `🎯 *TAKE PROFIT TRIGGERED!*\n` +
+                        const exitPayload = { tradeid: String(tradeId), ordertype: 'market' };
+                        await callFreqtradeApi('/forceexit', 'POST', exitPayload, trade.botKey)
+                            .catch(async () => await callFreqtradeApi('/forcesell', 'POST', exitPayload, trade.botKey));
+
+                        const tpMsg = `🎯 *CUSTOM TAKE PROFIT TRIGGERED!*\n` +
                                       `────────────────────\n` +
                                       `🤖 *Bot:* ${trade.botTag}\n` +
                                       `🪙 *Pair:* ${trade.pair}\n` +
@@ -466,11 +628,11 @@ async function checkTradeMilestones() {
                                       `💰 *Locked Profit:* *+${pnlPct}%*\n` +
                                       `💵 *Exit Price:* $${currentRate}\n` +
                                       `🎯 *Target Price:* $${target.targetPrice ? target.targetPrice : (openRate * (1 + target.targetRatio)).toFixed(4)}\n` +
-                                      `🚀 *Action:* Limit/Market exit executed successfully!\n` +
+                                      `🚀 *Action:* Market take profit executed instantly!\n` +
                                       `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
                         await sendWhatsAppSafe(TARGET_JID, { text: tpMsg });
-                        console.log(`Automated custom take profit executed for trade #${tradeId} (${trade.pair})`);
+                        console.log(`[TP Executed] Trade #${tradeId} (${trade.pair}) take profit hit at $${currentRate}`);
                     } catch (exitErr) {
                         console.error(`Failed to execute take profit exit for trade #${tradeId}:`, exitErr.message);
                     }
@@ -530,61 +692,139 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
-                    const data = await callFreqtradeApi('/status', 'GET', null, b).catch(() => null);
-                    return { bot: b, trades: Array.isArray(data) ? data : [] };
+                    try {
+                        const data = await callFreqtradeApi('/status', 'GET', null, b);
+                        return { bot: b, trades: Array.isArray(data) ? data : [], error: null };
+                    } catch (err) {
+                        return { bot: b, trades: [], error: err.message };
+                    }
                 })
             );
 
-
             const allTradesCount = results.reduce((acc, r) => acc + r.trades.length, 0);
+            const hasErrors = results.some(r => r.error !== null);
 
             if (allTradesCount === 0) {
-                return `📊 *OPEN TRADES STATUS*\n────────────────────\nNo active open trades on active bots.\nBoth bots are scanning for signals! 🔍`;
+                let msg = `📊 *PORTFOLIO STATUS (3 BOTS)*\n────────────────────\n`;
+                if (hasErrors) {
+                    msg += `⚠️ *Some bots could not be reached:*\n`;
+                    results.forEach(({ bot, error }) => {
+                        if (error) {
+                            msg += `🤖 *${bot.tag}*: ❌ Error: ${error}\n`;
+                        } else {
+                            msg += `🤖 *${bot.tag}*: 🟢 Connected (0 active trades)\n`;
+                        }
+                    });
+                    msg += `\n_Check if bots are running or verify passwords in configs._`;
+                } else {
+                    msg += `🟢 No active open trades right now.\n` +
+                           `All 3 bots are scanning for high-probability setups! 🔍\n\n` +
+                           `• ⚡ Sweep Elite 7 (Port ${FT_BOTS.bot1.port}): Scanning 5m\n` +
+                           `• 🚀 Trend Ignition (Port ${FT_BOTS.bot2.port}): Scanning 15m\n` +
+                           `• 💎 Donchian Pro (Port ${FT_BOTS.bot3.port}): Scanning 1h`;
+                }
+                return msg.trim();
             }
 
             let msg = `📊 *ACTIVE OPEN TRADES (${allTradesCount})*\n────────────────────\n`;
 
-            results.forEach(({ bot, trades }) => {
+            results.forEach(({ bot, trades, error }) => {
+                if (error) {
+                    msg += `🤖 *${bot.tag}*: ⚠️ ${error}\n\n`;
+                    return;
+                }
                 if (!trades.length) return;
+
                 msg += `🤖 *${bot.tag}* (${trades.length} active):\n`;
                 trades.forEach((trade, i) => {
                     const ratio = trade.profit_pct !== undefined ? trade.profit_pct : ((trade.profit_ratio || 0) * 100);
                     const profitPct = Number(ratio).toFixed(2);
                     const emoji = Number(ratio) >= 0 ? '🟢' : '🔴';
+                    const sign = Number(ratio) >= 0 ? '+' : '';
+
+                    // Profit absolute in USDT
+                    const pnlUsdt = trade.total_profit_abs !== undefined ? Number(trade.total_profit_abs).toFixed(2) : (trade.profit_abs !== undefined ? Number(trade.profit_abs).toFixed(2) : null);
+                    const pnlUsdtStr = pnlUsdt !== null ? ` (${sign}${pnlUsdt} USDT)` : '';
+
                     const rawDate = trade.open_date || trade.open_date_hum;
                     const openTime = toKarachiTime(rawDate);
 
-                    const openRate = parseFloat(trade.open_rate);
-                    const isIgnition = bot.id === 2;
-                    const defaultSlPct = isIgnition ? '-2.2%' : '-1.5%';
-                    const defaultSlRatio = isIgnition ? 0.978 : 0.985;
-                    const stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * defaultSlRatio).toFixed(4);
+                    // Compute elapsed duration
+                    let durStr = '';
+                    if (trade.open_timestamp) {
+                        const elapsedMin = Math.round((Date.now() - trade.open_timestamp) / 60000);
+                        durStr = elapsedMin < 60 ? `${elapsedMin}m` : `${Math.floor(elapsedMin / 60)}h ${elapsedMin % 60}m`;
+                    }
 
-                    let takeProfitPrice = (openRate * 1.015).toFixed(4);
-                    let tpExtra = '(+1.5%)';
+                    const openRate = parseFloat(trade.open_rate);
+                    const currentRate = parseFloat(trade.current_rate || trade.open_rate);
+                    const stakeVal = trade.stake_amount ? parseFloat(trade.stake_amount).toFixed(2) : (trade.amount ? (trade.amount * openRate).toFixed(2) : 'N/A');
+
+                    // Strategy-specific Stop Loss and Take Profit
+                    let defaultSlRatio = 0.985;
+                    let defaultSlPct = '-1.5%';
+                    let defaultTpRatio = 1.022;
+                    let defaultTpPct = '+2.2%';
+
+                    if (bot.id === 2) {
+                        defaultSlRatio = 0.972;
+                        defaultSlPct = '-2.8%';
+                        defaultTpRatio = 1.035;
+                        defaultTpPct = '+3.5%';
+                    } else if (bot.id === 3) {
+                        defaultSlRatio = 0.965;
+                        defaultSlPct = '-3.5%';
+                        defaultTpRatio = 1.048;
+                        defaultTpPct = '+4.8%';
+                    }
 
                     const tradeId = String(trade.trade_id);
+                    let stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * defaultSlRatio).toFixed(4);
+                    let slDisplayPct = trade.stop_loss_pct !== undefined ? `${trade.stop_loss_pct.toFixed(1)}%` : defaultSlPct;
+
+                    if (customStopLosses[tradeId]) {
+                        const csl = customStopLosses[tradeId];
+                        stopLossPrice = csl.targetPrice.toFixed(4);
+                        slDisplayPct = `${(csl.targetRatio * 100).toFixed(2)}% 🎯 Custom`;
+                    }
+
+                    const openTimestamp = trade.open_timestamp || (trade.open_date ? new Date(trade.open_date).getTime() : Date.now());
+                    const elapsedMin = Math.max(0, Math.round((Date.now() - openTimestamp) / 60000));
+                    const botKey = trade.botKey || `bot${bot.id}`;
+                    const activeRoi = getActiveStrategyRoi(botKey, elapsedMin);
+
+                    let takeProfitPrice = (openRate * (1 + activeRoi)).toFixed(4);
+                    let tpDisplayPct = `+${(activeRoi * 100).toFixed(1)}% ROI Table`;
+
                     if (customTakeProfits[tradeId]) {
                         const ctp = customTakeProfits[tradeId];
                         if (ctp.targetPrice) {
                             takeProfitPrice = ctp.targetPrice.toFixed(4);
                             const diffPct = (((ctp.targetPrice - openRate) / openRate) * 100).toFixed(2);
-                            tpExtra = `(+${diffPct}% 🎯 Custom)`;
+                            tpDisplayPct = `+${diffPct}% 🎯 Custom`;
                         } else if (ctp.targetRatio) {
                             takeProfitPrice = (openRate * (1 + ctp.targetRatio)).toFixed(4);
-                            tpExtra = `(+${(ctp.targetRatio * 100).toFixed(2)}% 🎯 Custom)`;
+                            tpDisplayPct = `+${(ctp.targetRatio * 100).toFixed(2)}% 🎯 Custom`;
                         }
                     }
 
-                    msg += `  ${i + 1}. *${trade.pair}* (ID: #${trade.trade_id}) ${emoji} ${profitPct}%\n` +
-                           `     💵 Open: *${trade.open_rate}*\n` +
-                           `     📍 Current: *${trade.current_rate}*\n` +
-                           `     🛡️ Stop Loss: *${stopLossPrice}* (${defaultSlPct})\n` +
-                           `     🎯 Take Profit: *${takeProfitPrice}* ${tpExtra}\n` +
-                           `     ⏱️ Opened: ${openTime}\n` +
+                    msg += `  ${i + 1}. *${trade.pair}* (ID: #${trade.trade_id})\n` +
+                           `     📈 PnL: ${emoji} *${sign}${profitPct}%*${pnlUsdtStr}\n` +
+                           `     💵 Open: *${openRate}* | Current: *${currentRate}*\n` +
+                           `     📦 Position: *${stakeVal} USDT*\n` +
+                           `     🛡️ Stop Loss: *${stopLossPrice}* (${slDisplayPct})\n` +
+                           `     🎯 Take Profit: *${takeProfitPrice}* (${tpDisplayPct})\n` +
+                           `     ⏱️ Opened: ${openTime}${durStr ? ` (${durStr} ago)` : ''}\n` +
                            `     🏷️ Tag: ${trade.enter_tag || 'entry'}\n\n`;
                 });
             });
+
+            // If some bots had errors while others had trades, append error summary
+            if (hasErrors) {
+                results.filter(r => r.error).forEach(({ bot, error }) => {
+                    msg += `⚠️ *${bot.tag} Warning:* ${error}\n`;
+                });
+            }
 
             return msg.trim();
         }
@@ -793,8 +1033,23 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
 
         if (cmd === '/balance' || cmd === 'balance') {
-            const data = await callFreqtradeApi('/balance');
-            let msg = `⚖️ *ACCOUNT BALANCE*\n────────────────────\n`;
+            let data = null;
+            let activeBotName = '';
+            for (const bKey of ['bot1', 'bot2', 'bot3']) {
+                try {
+                    data = await callFreqtradeApi('/balance', 'GET', null, bKey);
+                    if (data && data.currencies) {
+                        activeBotName = FT_BOTS[bKey].name;
+                        break;
+                    }
+                } catch (e) {}
+            }
+
+            if (!data || !data.currencies) {
+                return `⚠️ Could not fetch balance from any active bot. Please verify bot services are running.`;
+            }
+
+            let msg = `⚖️ *SHARED ACCOUNT BALANCE*\n────────────────────\n`;
             
             // Find USDT and open coin holdings
             const usdt = data.currencies?.find(c => c.currency === (data.stake || 'USDT'));
@@ -802,33 +1057,63 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const totalStake = data.total ? data.total.toFixed(2) : '0.00';
             const usedInTrades = (data.total - (usdt ? usdt.free : 0)).toFixed(2);
             
-            msg += `💵 *Total Equity:* ${totalStake} ${data.stake || 'USDT'}\n`;
-            msg += `🪙 *Available (Free):* ${freeStake} ${data.stake || 'USDT'}\n`;
-            msg += `📦 *In Open Trades:* ${usedInTrades} ${data.stake || 'USDT'}\n`;
+            msg += `💵 *Total Equity:* *${totalStake} ${data.stake || 'USDT'}*\n`;
+            msg += `🪙 *Available (Free):* *${freeStake} ${data.stake || 'USDT'}*\n`;
+            msg += `📦 *In Open Trades:* *${usedInTrades} ${data.stake || 'USDT'}*\n`;
             if (data.value && data.symbol) {
-                msg += `🇵🇰 *Total (PKR):* ${Number(data.value).toLocaleString('en-US', {maximumFractionDigits: 0})} ${data.symbol}\n`;
+                msg += `🇵🇰 *Total (PKR):* *${Number(data.value).toLocaleString('en-US', {maximumFractionDigits: 0})} ${data.symbol}*\n`;
             }
+            msg += `────────────────────\n` +
+                   `_Verified via ${activeBotName} (Binance Shared Wallet)_`;
             return msg.trim();
         }
 
-        if (cmd === '/count' || cmd === 'count') {
-            const data = await callFreqtradeApi('/count');
-            return `📜 *TRADE COUNT*\n────────────────────\n` +
-                   `Active: *${data.current}* / Max: *${data.max}* trades`;
-        }
+        if (cmd.startsWith('/performance') || cmd.startsWith('performance')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
 
-        if (cmd === '/performance' || cmd === 'performance') {
-            const data = await callFreqtradeApi('/performance');
-            if (!Array.isArray(data) || data.length === 0) {
-                return `📈 *PERFORMANCE*\n────────────────────\nNo closed trades recorded yet.`;
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
+
+            try {
+                const results = await Promise.all(
+                    botsToQuery.map(async (b) => {
+                        const data = await callFreqtradeApi('/performance', 'GET', null, b).catch(() => []);
+                        return { bot: b, list: Array.isArray(data) ? data : [] };
+                    })
+                );
+
+                // Aggregate performance by pair
+                const pairMap = {};
+                results.forEach(({ list }) => {
+                    list.forEach(p => {
+                        if (!pairMap[p.pair]) {
+                            pairMap[p.pair] = { pair: p.pair, count: 0, profit_abs: 0 };
+                        }
+                        pairMap[p.pair].count += (p.count || 0);
+                        pairMap[p.pair].profit_abs += (p.profit_abs || 0);
+                    });
+                });
+
+                const pairs = Object.values(pairMap).sort((a, b) => b.profit_abs - a.profit_abs);
+
+                if (pairs.length === 0) {
+                    return `📈 *PERFORMANCE*\n────────────────────\nNo closed trades recorded yet on active bots.`;
+                }
+
+                let msg = `📈 *PAIR PERFORMANCE SUMMARY*\n────────────────────\n`;
+                pairs.forEach((p) => {
+                    const profitUSDT = p.profit_abs.toFixed(2);
+                    const emoji = p.profit_abs >= 0 ? '🟢' : '🔴';
+                    const sign = p.profit_abs >= 0 ? '+' : '';
+                    msg += `${emoji} *${p.pair}*: ${p.count} trades | *${sign}${profitUSDT} USDT*\n`;
+                });
+                return msg.trim();
+            } catch (err) {
+                return `⚠️ Could not compile performance: ${err.message}`;
             }
-            let msg = `📈 *PAIR PERFORMANCE*\n────────────────────\n`;
-            data.forEach((p) => {
-                const profitUSDT = p.profit_abs?.toFixed(2) || 0;
-                const emoji = p.profit_abs >= 0 ? '🟢' : '🔴';
-                msg += `${emoji} *${p.pair}*: ${p.count} trades | ${profitUSDT} USDT (${p.profit_ratio.toFixed(2)}%)\n`;
-            });
-            return msg.trim();
         }
 
         if (cmd.startsWith('/daily') || cmd.startsWith('daily')) {
@@ -839,16 +1124,18 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             for (const p of parts.slice(1)) {
                 if (p === '1' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'ignition') targetBot = 'bot2';
+                else if (p === '3' || p === 'donchian') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
 
             try {
-                // Fetch recent closed trades from both bots to accurately compute exact daily PnL
+                // Fetch recent closed trades from all 3 bots to accurately compute exact daily PnL
                 let tradesPromises = [];
                 if (targetBot === 'all') {
                     tradesPromises = [
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot2').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot3').catch(() => ({ trades: [] }))
                     ];
                 } else {
                     tradesPromises = [
@@ -890,23 +1177,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 const sortedDates = Object.keys(dailyAgg).sort().reverse().slice(0, daysLimit);
 
                 if (sortedDates.length === 0) {
-                    // Fallback to Freqtrade built-in /daily endpoint if no closed trades in memory
-                    const ftDaily = await callFreqtradeApi(`/daily?timescale=${daysLimit}`, 'GET', null, targetBot === 'bot2' ? 'bot2' : 'bot1').catch(() => null);
-                    if (ftDaily?.data && ftDaily.data.length > 0) {
-                        let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${targetBot === 'all' ? 'DUAL BOTS' : targetBot.toUpperCase()})*\n────────────────────\n`;
-                        ftDaily.data.slice(-daysLimit).reverse().forEach(d => {
-                            const emoji = d.abs_profit >= 0 ? '🟢' : '🔴';
-                            const count = d.trade_count !== undefined ? d.trade_count : (d.trades || 0);
-                            msg += `${emoji} *${d.date}*: ${d.abs_profit >= 0 ? '+' : ''}${d.abs_profit.toFixed(2)} USDT | ${count} trades\n`;
-                        });
-                        return msg.trim();
-                    }
                     return `⏱️ *DAILY BREAKDOWN*\n────────────────────\nNo closed trades recorded in the selected period.`;
                 }
 
                 let totalPeriodProfit = 0;
                 let totalPeriodTrades = 0;
-                let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${targetBot === 'all' ? 'DUAL BOTS' : targetBot.toUpperCase()})*\n────────────────────\n`;
+                let botHeader = targetBot === 'all' ? 'TRI-BOT PORTFOLIO' : (FT_BOTS[targetBot]?.name || targetBot.toUpperCase());
+                let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${botHeader})*\n────────────────────\n`;
 
                 sortedDates.forEach(date => {
                     const row = dailyAgg[date];
@@ -919,7 +1196,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 msg += `────────────────────\n` +
                        `💰 *Total (${sortedDates.length} Days):* *${totalPeriodProfit >= 0 ? '+' : ''}${totalPeriodProfit.toFixed(2)} USDT* (${totalPeriodTrades} trades)\n` +
-                       `_Tip: Query specific days or bot, e.g. "/daily 3", "/daily 1", "/daily 2"_`;
+                       `_Tip: Query specific days or bot, e.g. "/daily 3", "/daily 1", "/daily 2", "/daily 3 14"_`;
 
                 return msg.trim();
             } catch (err) {
@@ -936,12 +1213,16 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             } else if (targetArg === '2' || targetArg === 'ignition') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot2');
                 return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Trend Ignition Elite.`;
+            } else if (targetArg === '3' || targetArg === 'donchian') {
+                await callFreqtradeApi('/stop', 'POST', null, 'bot3');
+                return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on Range Breakout Donchian Pro.`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/stop', 'POST', null, 'bot1').catch(() => null),
-                    callFreqtradeApi('/stop', 'POST', null, 'bot2').catch(() => null)
+                    callFreqtradeApi('/stop', 'POST', null, 'bot2').catch(() => null),
+                    callFreqtradeApi('/stop', 'POST', null, 'bot3').catch(() => null)
                 ]);
-                return `⏸️ *Both Bots Paused*\nNew trade entries stopped across both bots. Open trades still monitored for exit.`;
+                return `⏸️ *All 3 Bots Paused*\nNew trade entries stopped across all 3 bots. Open trades still monitored for exit.`;
             }
         }
 
@@ -954,12 +1235,16 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             } else if (targetArg === '2' || targetArg === 'ignition') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot2');
                 return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for trend ignition setups!`;
+            } else if (targetArg === '3' || targetArg === 'donchian') {
+                await callFreqtradeApi('/start', 'POST', null, 'bot3');
+                return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for Donchian range breakouts!`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/start', 'POST', null, 'bot1').catch(() => null),
-                    callFreqtradeApi('/start', 'POST', null, 'bot2').catch(() => null)
+                    callFreqtradeApi('/start', 'POST', null, 'bot2').catch(() => null),
+                    callFreqtradeApi('/start', 'POST', null, 'bot3').catch(() => null)
                 ]);
-                return `▶️ *Both Bots Resumed*\nBoth strategies scanning pairs for entry signals!`;
+                return `▶️ *All 3 Bots Resumed*\nAll 3 strategies scanning pairs for entry signals!`;
             }
         }
 
@@ -1103,33 +1388,31 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd.startsWith('/stoploss') || cmd.startsWith('stoploss') || cmd.startsWith('/sl ') || cmd.startsWith('sl ')) {
             const parts = commandText.trim().split(/\s+/);
             if (parts.length < 3) {
-                return `🛡️ *UPDATE STOP LOSS*\n────────────────────\n` +
+                return `🛡️ *SET CUSTOM STOP LOSS*\n────────────────────\n` +
                        `⚠️ *Usage:* /stoploss [trade_id] [stoploss_value]\n\n` +
                        `*Examples:*\n` +
-                       `• \`/stoploss 1 -0.010\` (Set -1.0% stop loss)\n` +
-                       `• \`/stoploss 1 -1.5%\` (Set -1.5% stop loss)\n` +
-                       `• \`/stoploss 1 134.50\` (Set absolute stop loss price)\n\n` +
+                       `• \`/sl 1 -1.5%\` (Set -1.5% stop loss)\n` +
+                       `• \`/sl 1 -0.015\` (Set -1.5% stop loss)\n` +
+                       `• \`/sl 1 134.50\` (Set absolute stop loss price $134.50)\n` +
+                       `• \`/sl 1 clear\` (Revert to strategy default stop loss)\n\n` +
                        `_Check active trade IDs with "/status"_`;
             }
 
             const tradeId = parts[1].replace('#', '').trim();
-            let rawValue = parts[2].trim().replace('%', '');
-            let stoplossValue = parseFloat(rawValue);
-
-            if (isNaN(stoplossValue)) {
-                return `⚠️ Invalid stop loss value: "${parts[2]}". Please provide a percentage (e.g. -0.012 or -1.2%) or an absolute price.`;
-            }
+            const actionArg = parts[2].trim().toLowerCase();
 
             try {
-                // Check if tradeId is valid in open trades across both bots
-                const [open1, open2] = await Promise.all([
+                // Check if tradeId is valid in open trades across all 3 bots
+                const [open1, open2, open3] = await Promise.all([
                     callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
-                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
                 ]);
 
                 const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
                 const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
-                const allOpenTrades = [...tagged1, ...tagged2];
+                const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3];
 
                 let targetTrade = allOpenTrades.find(t => 
                     String(t.trade_id) === String(tradeId) || 
@@ -1143,44 +1426,73 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
                 const actualTradeId = String(targetTrade.trade_id);
 
-                // If user provided a positive percentage e.g. 1.2 or 0.012, make it negative for relative SL
-                if (stoplossValue > 0 && stoplossValue <= 0.20) {
-                    stoplossValue = -stoplossValue;
-                } else if (stoplossValue > 0 && stoplossValue < 50 && stoplossValue < targetTrade.open_rate * 0.5) {
-                    // e.g. user entered "1.5" meaning -1.5%
-                    stoplossValue = -(stoplossValue / 100);
+                if (actionArg === 'clear' || actionArg === 'reset') {
+                    delete customStopLosses[actualTradeId];
+                    saveCustomStopLosses();
+                    return `🛡️ Cleared custom stop loss for trade #${actualTradeId}. Reverted to strategy defaults.`;
                 }
 
-                // If user provided an absolute price level (e.g. 135.20)
-                let payload = {};
-                if (stoplossValue > 0 && stoplossValue >= targetTrade.open_rate * 0.5) {
-                    // Absolute price mode: calculate relative ratio from open_rate
-                    const openRate = parseFloat(targetTrade.open_rate);
-                    const ratio = (stoplossValue - openRate) / openRate;
-                    payload = { stoploss: parseFloat(ratio.toFixed(4)) };
-                } else {
-                    // Ratio mode: e.g. -0.010 (-1.0%)
-                    payload = { stoploss: stoplossValue };
+                let rawValue = parts[2].trim().replace('-', '').replace('%', '');
+                let stoplossValue = parseFloat(rawValue);
+
+                if (isNaN(stoplossValue) || stoplossValue <= 0) {
+                    return `⚠️ Invalid stop loss value: "${parts[2]}". Please provide a percentage (e.g. -1.5%) or an absolute price.`;
                 }
 
-                // Update trade stoploss in Freqtrade
-                // Freqtrade REST API: POST /trades/{tradeid}/stoploss or PUT /trades/{tradeid}
-                const res = await callFreqtradeApi(`/trades/${actualTradeId}/stoploss`, 'POST', payload, targetTrade.botKey).catch(async (e) => {
-                    // Fallback to query param or direct trade update
-                    return await callFreqtradeApi(`/trades/${actualTradeId}`, 'PUT', payload, targetTrade.botKey);
-                });
-
-                const newPct = (Math.abs(payload.stoploss) * 100).toFixed(2);
                 const openRate = parseFloat(targetTrade.open_rate);
-                const estimatedPrice = (openRate * (1 + payload.stoploss)).toFixed(4);
 
-                return `🛡️ *STOP LOSS UPDATED*\n────────────────────\n` +
+                // Determine if input is absolute price or relative percentage
+                if (stoplossValue >= openRate * 0.5) {
+                    // Absolute price level
+                    if (stoplossValue >= openRate) {
+                        return `⚠️ Stop loss price ($${stoplossValue}) must be LOWER than entry price ($${openRate}) for long positions!`;
+                    }
+                    const ratio = (stoplossValue - openRate) / openRate;
+                    customStopLosses[actualTradeId] = {
+                        pair: targetTrade.pair,
+                        targetPrice: stoplossValue,
+                        targetRatio: ratio,
+                        openRate: openRate,
+                        botKey: targetTrade.botKey,
+                        setAt: toKarachiTime(new Date())
+                    };
+                } else if (stoplossValue <= 0.30) {
+                    // Ratio mode e.g. 0.015 (-1.5%)
+                    customStopLosses[actualTradeId] = {
+                        pair: targetTrade.pair,
+                        targetRatio: -stoplossValue,
+                        targetPrice: openRate * (1 - stoplossValue),
+                        openRate: openRate,
+                        botKey: targetTrade.botKey,
+                        setAt: toKarachiTime(new Date())
+                    };
+                } else {
+                    // Whole percentage mode e.g. 1.5 or 2 meaning -1.5%
+                    const ratio = -(stoplossValue / 100);
+                    customStopLosses[actualTradeId] = {
+                        pair: targetTrade.pair,
+                        targetRatio: ratio,
+                        targetPrice: openRate * (1 + ratio),
+                        openRate: openRate,
+                        botKey: targetTrade.botKey,
+                        setAt: toKarachiTime(new Date())
+                    };
+                }
+
+                saveCustomStopLosses();
+
+                const csl = customStopLosses[actualTradeId];
+                const newPct = (Math.abs(csl.targetRatio) * 100).toFixed(2);
+                const estimatedPrice = csl.targetPrice.toFixed(4);
+
+                return `🛡️ *CUSTOM STOP LOSS ACTIVE*\n────────────────────\n` +
                        `🪙 *Pair:* ${targetTrade.pair}\n` +
                        `🆔 *Trade ID:* #${actualTradeId}\n` +
-                       `🛡️ *New Stop Loss:* *-${newPct}%* (~$${estimatedPrice})\n` +
+                       `🤖 *Bot:* ${targetTrade.botTag}\n` +
+                       `🛡️ *Trigger Level:* *$${estimatedPrice} (-${newPct}%)*\n` +
                        `💵 *Open Rate:* $${openRate}\n` +
-                       `⏰ *Time:* ${toKarachiTime(new Date())}\n\n` +
-                       `_Freqtrade has adjusted risk for this trade._`;
+                       `⏰ *Activated:* ${toKarachiTime(new Date())}\n\n` +
+                       `_Active Bridge Sentinel: When price touches this level, a Market Force Exit will execute immediately!_`;
             } catch (err) {
                 return `⚠️ Failed to update stop loss for trade #${actualTradeId}: ${err.message}`;
             }
@@ -1203,15 +1515,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const actionArg = parts[2].trim().toLowerCase();
 
             try {
-                // Check if tradeId is valid in open trades across both bots
-                const [open1, open2] = await Promise.all([
+                // Check if tradeId is valid in open trades across all 3 bots
+                const [open1, open2, open3] = await Promise.all([
                     callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
-                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => [])
+                    callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
                 ]);
 
                 const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
                 const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
-                const allOpenTrades = [...tagged1, ...tagged2];
+                const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3];
 
                 let targetTrade = allOpenTrades.find(t => 
                     String(t.trade_id) === String(tradeId) || 
@@ -2053,6 +2367,6 @@ app.listen(BRIDGE_PORT, () => {
     startWhatsApp();
     setInterval(checkMorningDigest, 60000);        // Check every minute for 9:00 AM PKT digest
     setInterval(checkCustomPriceAlerts, 20000);    // Check custom price alerts every 20 seconds
-    setInterval(checkTradeMilestones, 15000);      // Check trade +1.0% milestones & duration every 15 seconds
+    setInterval(checkTradeMilestones, 5000);       // Check trade SL, TP, milestones & duration every 5 seconds
     setInterval(checkStrategyModes, 30000);        // Check sweep mode & ignition mode every 30 seconds
 });

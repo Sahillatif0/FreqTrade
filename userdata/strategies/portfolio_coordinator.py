@@ -5,7 +5,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = os.path.join("userdata", "portfolio_state.json")
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+USERDATA_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
     "RangeBreakoutDonchianPro": 3,
@@ -15,12 +17,15 @@ PRIORITY = {
 
 def get_state() -> dict:
     if not os.path.exists(STATE_FILE):
-        return {
+        default_state = {
             "active_strategy": None,
             "active_pair": None,
             "pending_intent": None,
-            "status": "IDLE"
+            "status": "IDLE",
+            "last_update": time.time()
         }
+        set_state(default_state)
+        return default_state
     try:
         with open(STATE_FILE, "r") as f:
             return json.load(f)
@@ -30,16 +35,33 @@ def get_state() -> dict:
             "active_strategy": None,
             "active_pair": None,
             "pending_intent": None,
-            "status": "IDLE"
+            "status": "IDLE",
+            "last_update": time.time()
         }
 
 def set_state(data: dict) -> None:
     try:
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        data["last_update"] = time.time()
         with open(STATE_FILE, "w") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.error(f"Error writing portfolio state: {e}")
+
+# Auto-initialize state file upon module import
+try:
+    if not os.path.exists(STATE_FILE):
+        set_state({
+            "active_strategy": None,
+            "active_pair": None,
+            "pending_intent": None,
+            "status": "IDLE"
+        })
+        logger.info(f"[PortfolioCoordinator] State file initialized at {STATE_FILE}")
+    else:
+        logger.info(f"[PortfolioCoordinator] Connected to existing state file at {STATE_FILE}")
+except Exception as e:
+    logger.error(f"[PortfolioCoordinator] Init error: {e}")
 
 def notify_whatsapp(event_type: str, data: dict) -> None:
     """Dispatches real-time preemption alerts directly to the WhatsApp bridge"""

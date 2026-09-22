@@ -6,7 +6,18 @@ from datetime import datetime
 import talib.abstract as ta
 from freqtrade.strategy import IStrategy
 
-logger = logging.getLogger(__name__)
+import sys
+import os
+_strat_dir = os.path.dirname(os.path.abspath(__file__))
+if _strat_dir not in sys.path:
+    sys.path.insert(0, _strat_dir)
+
+try:
+    import portfolio_coordinator as pc
+    logger.info("[TrendIgnition] portfolio_coordinator loaded successfully.")
+except Exception as e:
+    logger.warning(f"[TrendIgnition] Could not load portfolio_coordinator: {e}")
+    pc = None
 
 class TrendIgnitionElite(IStrategy):
     """
@@ -114,11 +125,11 @@ class TrendIgnitionElite(IStrategy):
 
         # Preemption Notification: If last candle fired ignition, notify coordinator
         if len(dataframe) > 0 and bool(dataframe["enter_long"].iloc[-1]):
-            try:
-                from portfolio_coordinator import request_preemption
-                request_preemption("TrendIgnitionElite", metadata.get("pair", ""))
-            except Exception:
-                pass
+            if pc:
+                try:
+                    pc.request_preemption("TrendIgnitionElite", metadata.get("pair", ""))
+                except Exception as e:
+                    logger.warning(f"[TrendIgnition] Preemption request error: {e}")
 
         return dataframe
 
@@ -140,35 +151,35 @@ class TrendIgnitionElite(IStrategy):
     def custom_exit(self, pair: str, trade: 'Trade', current_time, current_rate: float,
                     current_profit: float, **kwargs):
         """Preempts for DonchianPro if Donchian has higher priority intent"""
-        try:
-            from portfolio_coordinator import get_state
-            state = get_state()
-            pending = state.get("pending_intent")
-            if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                if pending.get("priority", 1) > 2:  # Donchian is priority 3
-                    logger.info(f"[TrendIgnition] Preempting for higher priority: {pending.get('strategy')}")
-                    return "preempted_for_donchian"
-        except Exception:
-            pass
+        if pc:
+            try:
+                state = pc.get_state()
+                pending = state.get("pending_intent")
+                if pending and pending.get("status") == "WAITING_FOR_BALANCE":
+                    if pending.get("priority", 1) > 2:  # Donchian is priority 3
+                        logger.info(f"[TrendIgnition] Preempting for higher priority: {pending.get('strategy')}")
+                        return "preempted_for_donchian"
+            except Exception as e:
+                logger.warning(f"[TrendIgnition] Coordinator check error: {e}")
         return None
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time, entry_tag: str,
                             side: str, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import confirm_entry
-            confirm_entry("TrendIgnitionElite", pair)
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.confirm_entry("TrendIgnitionElite", pair)
+            except Exception as e:
+                logger.warning(f"[TrendIgnition] Confirm entry error: {e}")
         return True
 
     def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time, **kwargs) -> bool:
-        try:
-            from portfolio_coordinator import confirm_exit
-            confirm_exit("TrendIgnitionElite", pair)
-        except Exception:
-            pass
+        if pc:
+            try:
+                pc.confirm_exit("TrendIgnitionElite", pair)
+            except Exception as e:
+                logger.warning(f"[TrendIgnition] Confirm exit error: {e}")
         return True
 
