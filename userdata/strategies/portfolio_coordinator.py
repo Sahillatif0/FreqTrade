@@ -10,7 +10,7 @@ USERDATA_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
-    "RangeBreakoutDonchianPro": 3,
+    "HighFrequencyCompoundElite": 3,
     "TrendIgnitionElite": 2,
     "HighFrequencySweepElite7": 1
 }

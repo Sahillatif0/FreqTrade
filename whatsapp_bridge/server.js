@@ -78,10 +78,10 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig('config_bot3_donchian.json', {
+    bot3: loadBotConfig('config_bot3_compound.json', {
         id: 3,
-        name: 'Range Breakout Donchian Pro',
-        tag: '💎 DONCHIAN PRO',
+        name: 'High Frequency Compound Elite',
+        tag: '⚡ COMPOUND ELITE',
         host: '127.0.0.1',
         port: 8082,
         username: 'freqtrader',
@@ -178,11 +178,13 @@ const STRATEGY_ROI_TABLES = {
         { min: 30,  roi: 0.019 },
         { min: 0,   roi: 0.028 }
     ],
-    bot3: [ // RangeBreakoutDonchianPro (1h): {"0": 0.048, "120": 0.035, "240": 0.025, "480": 0.015}
-        { min: 480, roi: 0.015 },
-        { min: 240, roi: 0.025 },
-        { min: 120, roi: 0.035 },
-        { min: 0,   roi: 0.048 }
+    bot3: [ // HighFrequencyCompoundElite (5m): {"0": 0.036, "20": 0.026, "45": 0.020, "90": 0.014, "150": 0.009, "240": 0.006}
+        { min: 240, roi: 0.006 },
+        { min: 150, roi: 0.009 },
+        { min: 90,  roi: 0.014 },
+        { min: 45,  roi: 0.020 },
+        { min: 20,  roi: 0.026 },
+        { min: 0,   roi: 0.036 }
     ]
 };
 
@@ -385,9 +387,9 @@ async function generateDailyDigest() {
         return `🌅 *DAILY TRADING DIGEST (3-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
                `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
-               `   • Sweep 7: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Compound: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `   • Ignition: ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Donchian: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Sweep 7: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
                `📊 *Active Trades:* ${openCount} open\n` +
@@ -395,7 +397,7 @@ async function generateDailyDigest() {
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_Sweep (5m), Ignition (15m) & Donchian (1h) active!_ 🚀`;
+               `_Compound (5m), Ignition (15m) & Sweep (5m) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -654,7 +656,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
                    `📊 */status* - Active open trades across all 3 bots\n` +
-                   `   • */status 1* (Sweep 7) | */status 2* (Ignition) | */status 3* (Donchian)\n` +
+                   `   • */status 1* (Sweep 7) | */status 2* (Ignition) | */status 3* (Compound)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
                    `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
                    `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
@@ -677,7 +679,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `▶️ */start [1/2/3/all]* - Resume trading\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Automated Preemption ensures Donchian & Trend get top priority!_`;
+                   `_Tip: Automated Preemption ensures Compound & Trend get top priority!_`;
         }
 
 
@@ -688,7 +690,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '3' || targetArg === 'compound' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -721,7 +723,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                            `All 3 bots are scanning for high-probability setups! 🔍\n\n` +
                            `• ⚡ Sweep Elite 7 (Port ${FT_BOTS.bot1.port}): Scanning 5m\n` +
                            `• 🚀 Trend Ignition (Port ${FT_BOTS.bot2.port}): Scanning 15m\n` +
-                           `• 💎 Donchian Pro (Port ${FT_BOTS.bot3.port}): Scanning 1h`;
+                           `• ⚡ Compound Elite (Port ${FT_BOTS.bot3.port}): Scanning 5m`;
                 }
                 return msg.trim();
             }
@@ -837,7 +839,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             for (let p of parts.slice(1)) {
                 if (p === '1' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'ignition') targetBot = 'bot2';
-                else if (p === '3' || p === 'donchian') targetBot = 'bot3';
+                else if (p === '3' || p === 'compound') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) limit = parseInt(p);
             }
 
@@ -967,7 +969,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '3' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -1075,7 +1077,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'donchian') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '3' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             try {
                 const results = await Promise.all(
@@ -1124,7 +1126,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             for (const p of parts.slice(1)) {
                 if (p === '1' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'ignition') targetBot = 'bot2';
-                else if (p === '3' || p === 'donchian') targetBot = 'bot3';
+                else if (p === '3' || p === 'compound') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
 
@@ -1213,9 +1215,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             } else if (targetArg === '2' || targetArg === 'ignition') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot2');
                 return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Trend Ignition Elite.`;
-            } else if (targetArg === '3' || targetArg === 'donchian') {
+            } else if (targetArg === '3' || targetArg === 'compound') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot3');
-                return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on Range Breakout Donchian Pro.`;
+                return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on Range Breakout Compound Pro.`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/stop', 'POST', null, 'bot1').catch(() => null),
@@ -1235,9 +1237,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             } else if (targetArg === '2' || targetArg === 'ignition') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot2');
                 return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for trend ignition setups!`;
-            } else if (targetArg === '3' || targetArg === 'donchian') {
+            } else if (targetArg === '3' || targetArg === 'compound') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot3');
-                return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for Donchian range breakouts!`;
+                return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for Compound range breakouts!`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/start', 'POST', null, 'bot1').catch(() => null),
@@ -1347,7 +1349,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     }
                     if (results.length === 0) return `⚠️ No active open trades to sell on any bot.`;
                     return results.join('\n');
-                } else if (targetArg === '1' || targetArg === '2' || targetArg === '3' || targetArg === 'donchian') {
+                } else if (targetArg === '1' || targetArg === '2' || targetArg === '3' || targetArg === 'compound') {
                     const b = targetArg === '1' ? FT_BOTS.bot1 : (targetArg === '2' ? FT_BOTS.bot2 : FT_BOTS.bot3);
                     if (specificTradeId) {
                         await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(specificTradeId) }, b);
@@ -1631,7 +1633,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else if (targetArg === '2' || targetArg === 'ignition') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot2');
                     return `🔄 *[${FT_BOTS.bot2.tag}] Config & Pairlist Reloaded Successfully!*`;
-                } else if (targetArg === '3' || targetArg === 'donchian') {
+                } else if (targetArg === '3' || targetArg === 'compound') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot3');
                     return `🔄 *[${FT_BOTS.bot3.tag}] Config & Pairlist Reloaded Successfully!*`;
                 } else {
@@ -1777,7 +1779,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
                    `   Strategy: TrendIgnitionElite (15m Runner)\n\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: RangeBreakoutDonchianPro (1h Breakout)\n\n` +
+                   `   Strategy: HighFrequencyCompoundElite (1h Breakout)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -2051,7 +2053,7 @@ app.post('/preemption-alert', async (req, res) => {
 
         let messageText = '';
         if (data.event === 'PREEMPTION_REQUESTED') {
-            const inStrat = data.incoming_strategy || 'RangeBreakoutDonchianPro';
+            const inStrat = data.incoming_strategy || 'HighFrequencyCompoundElite';
             const curStrat = data.current_strategy || 'HighFrequencySweepElite7';
             messageText = `⚡ *PORTFOLIO PREEMPTION TRIGGERED!*\n` +
                           `────────────────────\n` +
@@ -2060,7 +2062,7 @@ app.post('/preemption-alert', async (req, res) => {
                           `⚖️ *Action:* Coordinator requesting safe exit to release wallet capital!\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else if (data.event === 'BALANCE_RELEASED') {
-            const inStrat = data.incoming_strategy || 'RangeBreakoutDonchianPro';
+            const inStrat = data.incoming_strategy || 'HighFrequencyCompoundElite';
             const relStrat = data.released_from_strategy || 'Sweep';
             messageText = `✅ *CAPITAL RELEASED FOR EXECUTION!*\n` +
                           `────────────────────\n` +
@@ -2298,7 +2300,7 @@ async function checkStrategyModes() {
                 }
             }
 
-            // 3. Full Trade Opportunity Check for RangeBreakoutDonchianPro (1h)
+            // 3. Full Trade Opportunity Check for HighFrequencyCompoundElite (1h)
             const klines1h = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=55`);
             if (Array.isArray(klines1h) && klines1h.length >= 30) {
                 const closes = klines1h.map(k => parseFloat(k[4]));
@@ -2322,7 +2324,7 @@ async function checkStrategyModes() {
 
                 const rsi1h = calculateRSI(closes, 14);
 
-                const isDonchianBreakout = (
+                const isCompoundBreakout = (
                     (lastClose > rangeHigh24) &&
                     (lastClose > lastOpen) &&
                     (lastVol > volSma20 * 1.7) &&
@@ -2331,11 +2333,11 @@ async function checkStrategyModes() {
                     (rsi1h >= 54 && rsi1h <= 78)
                 );
 
-                const donchianKey = `DONCHIAN_FULL_${pair}`;
-                const lastDonchianTime = lastModeAlertTimes[donchianKey] || 0;
+                const compoundKey = `DONCHIAN_FULL_${pair}`;
+                const lastCompoundTime = lastModeAlertTimes[compoundKey] || 0;
 
-                if (isDonchianBreakout && (now - lastDonchianTime > 60 * 60 * 1000)) {
-                    lastModeAlertTimes[donchianKey] = now;
+                if (isCompoundBreakout && (now - lastCompoundTime > 60 * 60 * 1000)) {
+                    lastModeAlertTimes[compoundKey] = now;
 
                     let isWalletFree = true;
                     let openTradesCount = 0;
@@ -2347,9 +2349,9 @@ async function checkStrategyModes() {
                         }
                     } catch (err) {}
 
-                    const donchianMsg = `💎 *DONCHIAN PRO BREAKOUT DETECTED!*\n` +
+                    const compoundMsg = `💎 *DONCHIAN PRO BREAKOUT DETECTED!*\n` +
                                        `────────────────────\n` +
-                                       `🤖 *Strategy:* RangeBreakoutDonchianPro (1h)\n` +
+                                       `🤖 *Strategy:* HighFrequencyCompoundElite (1h)\n` +
                                        `🪙 *Pair:* *${pair}*\n` +
                                        `📍 *Breakout Price:* $${lastClose}\n` +
                                        `🏔️ *24h Range High:* $${rangeHigh24}\n` +
@@ -2358,8 +2360,8 @@ async function checkStrategyModes() {
                                        `⚡ *Priority:* High Priority (Triggers Auto-Preemption if needed)\n` +
                                        `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sendWhatsAppSafe(TARGET_JID, { text: donchianMsg });
-                    console.log(`Automated Donchian Pro Breakout alert sent for ${pair}`);
+                    await sendWhatsAppSafe(TARGET_JID, { text: compoundMsg });
+                    console.log(`Automated Compound Pro Breakout alert sent for ${pair}`);
                 }
             }
         } catch (e) {
