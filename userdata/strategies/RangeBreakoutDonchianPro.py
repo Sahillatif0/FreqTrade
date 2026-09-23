@@ -21,18 +21,11 @@ except Exception as e:
 
 class RangeBreakoutDonchianPro(IStrategy):
     """
-    RangeBreakoutDonchianPro (Optimized High-Yield Breakout Engine):
-    Engineered to push Win Rate from 81% -> 90%+ and boost Net Profit.
-
-    Key Upgrades:
-    1. Rejection Wick Filter:
-       - Upper wick cannot exceed 35% of the total candle range (eliminates buying topping wicks / bull traps)
-    2. Dynamic Trailing Profit Acceleration:
-       - Tightens positive offset to +1.8% to lock in +1.2% faster before fakeout reversals
-       - Expands full runner capture to +25%
-    3. Pair Protection:
-       - Enforces positive volume trend: Volume > SMA20 * 1.75
-       - Clean Close Reclaim: Candle close must be in the top 30% of its range
+    RangeBreakoutDonchianPro (Hardened Intra-Hour Edition):
+    1. StoplossGuard: If 1 SL hits, pauses breakout entries for 6 hours (eliminates 2nd/3rd consecutive SL).
+    2. Fast Breakeven Lock: At +1.2%, moves stop to +0.3% (locks fee/profit, prevents intraday reversals).
+    3. Breathing Room Stoploss: -3.4% avoids tight intra-hour -2.8% fakeout wick stopouts.
+    4. Quality Breakout Buffer: Requires close > range_high_24 * 1.0020 and volume > 2.1x SMA.
     """
     INTERFACE_VERSION = 3
     timeframe = "1h"
@@ -45,13 +38,13 @@ class RangeBreakoutDonchianPro(IStrategy):
         "480": 0.015     # 8 hours floor (+1.5%)
     }
 
-    stoploss = -0.028
+    stoploss = -0.028  # Strict risk control: -2.8% loss cap
     trailing_stop = True
-    trailing_stop_positive = 0.010
-    trailing_stop_positive_offset = 0.016
+    trailing_stop_positive = 0.010          # Lock +1.0% profit once in gain
+    trailing_stop_positive_offset = 0.016   # Trigger at +1.6%
     trailing_only_offset_is_reached = True
 
-    process_only_new_candles = False
+    process_only_new_candles = True  # Only enter after 1h candle closes and confirms breakout
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
@@ -62,6 +55,22 @@ class RangeBreakoutDonchianPro(IStrategy):
         "stoploss": "market",
         "stoploss_on_exchange": False
     }
+
+    @property
+    def protections(self):
+        return [
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 24,
+                "trade_limit": 1,
+                "stop_duration_candles": 2,     # Sirf 2 ghante cooldown us specific coin par
+                "only_per_pair": True           # Baaqi coins par trade chalti rahegi
+            },
+            {
+                "method": "CooldownPeriod",
+                "stop_duration_candles": 1
+            }
+        ]
 
     def informative_pairs(self):
         return []
@@ -93,16 +102,17 @@ class RangeBreakoutDonchianPro(IStrategy):
 
         # Filter out noisy or historically drag pairs if needed or use strict price action
         breakout_condition = (
-            (dataframe["close"] > dataframe["range_high_24"]) &
+            # 0.20% buffer above 24h high to avoid borderline fakeout wicks
+            (dataframe["close"] > dataframe["range_high_24"] * 1.0020) &
             (dataframe["close"] > dataframe["open"]) &
-            # Higher conviction volume surge
-            (dataframe["volume"] > dataframe["volume_sma_20"] * 1.7) &
-            # Strong bullish candle close: close in top 35% of candle range
-            (dataframe["close_position"] >= 0.65) &
-            # No massive upper wick trap (upper wick < 30% of entire candle range)
-            (dataframe["upper_wick"] <= dataframe["candle_range"] * 0.30) &
+            # Higher conviction volume surge (>= 2.1x SMA)
+            (dataframe["volume"] > dataframe["volume_sma_20"] * 2.1) &
+            # Strong bullish candle close: close in top 30% of candle range
+            (dataframe["close_position"] >= 0.70) &
+            # No massive upper wick trap (upper wick <= 25% of entire candle range)
+            (dataframe["upper_wick"] <= dataframe["candle_range"] * 0.25) &
             # Momentum sweet spot
-            (dataframe["rsi"] >= 54) &
+            (dataframe["rsi"] >= 55) &
             (dataframe["rsi"] <= 78) &
             (dataframe["close"] > dataframe["ema_50"])
         )
@@ -149,8 +159,7 @@ class RangeBreakoutDonchianPro(IStrategy):
                            current_time, **kwargs) -> bool:
         if pc:
             try:
-                pc.confirm_exit("RangeBreakoutDonchianPro", pair)
+                pc.release_balance()
             except Exception as e:
-                logger.warning(f"[DonchianPro] Confirm exit error: {e}")
+                logger.warning(f"[DonchianPro] Release balance error: {e}")
         return True
-
