@@ -129,7 +129,7 @@ class HighFrequencyCompoundElite(IStrategy):
             (dataframe["sweep_depth_12"] >= 0.0012) &
             (dataframe["lower_wick"] >= dataframe["body"] * 0.9) &
             (dataframe["lower_wick"] >= dataframe["upper_wick"] * 1.4) &
-            (dataframe["rsi"] < 32) &
+            (dataframe["rsi"] < 35) &
             (dataframe["volume"] > dataframe["volume_sma"] * 0.8)
         )
 

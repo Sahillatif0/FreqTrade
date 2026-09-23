@@ -151,15 +151,15 @@ class TrendIgnitionElite(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time, current_rate: float,
                     current_profit: float, **kwargs):
-        """Preempts for DonchianPro if Donchian has higher priority intent"""
+        """Preempts for HighFrequencyCompoundElite if HFCE has higher priority intent"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 2:  # Donchian is priority 3
+                    if pending.get("priority", 1) > 2:  # HFCE is priority 3
                         logger.info(f"[TrendIgnition] Preempting for higher priority: {pending.get('strategy')}")
-                        return "preempted_for_donchian"
+                        return "preempted_for_high_priority"
             except Exception as e:
                 logger.warning(f"[TrendIgnition] Coordinator check error: {e}")
         return None

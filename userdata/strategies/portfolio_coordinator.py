@@ -12,7 +12,7 @@ STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 PRIORITY = {
     "HighFrequencyCompoundElite": 3,
     "TrendIgnitionElite": 2,
-    "HighFrequencySweepElite7": 1
+    "TTMSqueezeBreakoutElite": 1
 }
 
 def get_state() -> dict:

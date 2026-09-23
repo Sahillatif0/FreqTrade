@@ -60,10 +60,10 @@ function loadBotConfig(configFile, defaults) {
 
 // Tri-Bot Freqtrade API Server Config with auto-detection from config files
 const FT_BOTS = {
-    bot1: loadBotConfig('config_bot1_sweep.json', {
+    bot1: loadBotConfig('config_bot1_compound.json', {
         id: 1,
-        name: 'Sweep Elite 7',
-        tag: '⚡ SWEEP ELITE 7',
+        name: 'High Frequency Compound Elite',
+        tag: '⚡ COMPOUND ELITE',
         host: '127.0.0.1',
         port: 8080,
         username: 'freqtrader',
@@ -78,10 +78,10 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig('config_bot3_compound.json', {
+    bot3: loadBotConfig('config_bot3_ttm.json', {
         id: 3,
-        name: 'High Frequency Compound Elite',
-        tag: '⚡ COMPOUND ELITE',
+        name: 'TTM Squeeze Breakout Elite',
+        tag: '🎯 TTM SQUEEZE ELITE',
         host: '127.0.0.1',
         port: 8082,
         username: 'freqtrader',
@@ -164,12 +164,11 @@ function saveCustomStopLosses() {
     }
 }
 
-// Strategy minimal_roi configuration tables for time-decayed Take Profit
 const STRATEGY_ROI_TABLES = {
-    bot1: [ // SweepElite7 (5m): {"0": 0.025, "45": 0.019, "90": 0.013, "180": 0.007}
-        { min: 180, roi: 0.007 },
-        { min: 90,  roi: 0.013 },
-        { min: 45,  roi: 0.019 },
+    bot1: [ // HighFrequencyCompoundElite (5m): {"0": 0.025, "35": 0.018, "75": 0.012, "150": 0.006}
+        { min: 150, roi: 0.006 },
+        { min: 75,  roi: 0.012 },
+        { min: 35,  roi: 0.018 },
         { min: 0,   roi: 0.025 }
     ],
     bot2: [ // TrendIgnitionElite (15m): {"0": 0.028, "30": 0.019, "75": 0.013, "150": 0.008}
@@ -178,13 +177,12 @@ const STRATEGY_ROI_TABLES = {
         { min: 30,  roi: 0.019 },
         { min: 0,   roi: 0.028 }
     ],
-    bot3: [ // HighFrequencyCompoundElite (5m): {"0": 0.036, "20": 0.026, "45": 0.020, "90": 0.014, "150": 0.009, "240": 0.006}
-        { min: 240, roi: 0.006 },
-        { min: 150, roi: 0.009 },
-        { min: 90,  roi: 0.014 },
-        { min: 45,  roi: 0.020 },
-        { min: 20,  roi: 0.026 },
-        { min: 0,   roi: 0.036 }
+    bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.035, "30": 0.024, "60": 0.018, "120": 0.012, "240": 0.009}
+        { min: 240, roi: 0.009 },
+        { min: 120, roi: 0.012 },
+        { min: 60,  roi: 0.018 },
+        { min: 30,  roi: 0.024 },
+        { min: 0,   roi: 0.035 }
     ]
 };
 
@@ -656,13 +654,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
                    `📊 */status* - Active open trades across all 3 bots\n` +
-                   `   • */status 1* (Sweep 7) | */status 2* (Ignition) | */status 3* (Compound)\n` +
+                   `   • */status 1* (Compound) | */status 2* (Ignition) | */status 3* (TTM Squeeze)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
                    `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
                    `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
                    `   • */profit 1* | */profit 2* | */profit 3* for single bot breakdown\n` +
                    `⚖️ */balance* - Shared Binance wallet balance & PKR equity\n` +
-                   `🎯 */opportunities* - Live sweep radar across whitelist pairs\n` +
+                   `🎯 */opportunities* - Live radar across whitelist pairs\n` +
                    `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert\n` +
                    `📋 */alerts* - View all active custom price alerts\n` +
                    `🗑️ */clearalerts* - Clear active custom price alerts\n` +
@@ -679,7 +677,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `▶️ */start [1/2/3/all]* - Resume trading\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Automated Preemption ensures Compound & Trend get top priority!_`;
+                   `_Tip: Automated Preemption ensures Compound (P3) & Trend (P2) get priority over TTM (P1)!_`;
         }
 
 
@@ -765,19 +763,21 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     // Strategy-specific Stop Loss and Take Profit
                     let defaultSlRatio = 0.985;
                     let defaultSlPct = '-1.5%';
-                    let defaultTpRatio = 1.022;
-                    let defaultTpPct = '+2.2%';
+                    let defaultTpRatio = 1.025;
+                    let defaultTpPct = '+2.5%';
 
                     if (bot.id === 2) {
-                        defaultSlRatio = 0.972;
-                        defaultSlPct = '-2.8%';
+                        // TrendIgnitionElite (15m)
+                        defaultSlRatio = 0.978;
+                        defaultSlPct = '-2.2%';
+                        defaultTpRatio = 1.028;
+                        defaultTpPct = '+2.8%';
+                    } else if (bot.id === 3) {
+                        // TTMSqueezeBreakoutElite (15m)
+                        defaultSlRatio = 0.980;
+                        defaultSlPct = '-2.0%';
                         defaultTpRatio = 1.035;
                         defaultTpPct = '+3.5%';
-                    } else if (bot.id === 3) {
-                        defaultSlRatio = 0.965;
-                        defaultSlPct = '-3.5%';
-                        defaultTpRatio = 1.048;
-                        defaultTpPct = '+4.8%';
                     }
 
                     const tradeId = String(trade.trade_id);
@@ -1775,11 +1775,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             return `ℹ️ *TRI-BOT SYSTEM STATUS*\n────────────────────\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencySweepElite7 (5m Scalp)\n\n` +
+                   `   Strategy: HighFrequencyCompoundElite (5m Scalp | Priority 3)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: TrendIgnitionElite (15m Runner)\n\n` +
+                   `   Strategy: TrendIgnitionElite (15m Momentum | Priority 2)\n\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencyCompoundElite (1h Breakout)\n\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 1)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -2195,7 +2195,7 @@ async function checkStrategyModes() {
 
                     const eliteMsg = `⚡ *FULL TRADE OPPORTUNITY DETECTED!*\n` +
                                      `────────────────────\n` +
-                                     `🤖 *Strategy:* HighFrequencySweepElite7 (5m)\n` +
+                                     `🤖 *Strategy:* HighFrequencyCompoundElite (5m Scalp)\n` +
                                      `🪙 *Pair:* *${pair}*\n` +
                                      `📍 *Entry Price:* $${currentClose}\n` +
                                      `🛡️ *18-Bar Swing Low:* $${swingLow18}\n` +
@@ -2300,44 +2300,63 @@ async function checkStrategyModes() {
                 }
             }
 
-            // 3. Full Trade Opportunity Check for HighFrequencyCompoundElite (1h)
-            const klines1h = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=55`);
-            if (Array.isArray(klines1h) && klines1h.length >= 30) {
-                const closes = klines1h.map(k => parseFloat(k[4]));
-                const highs = klines1h.map(k => parseFloat(k[2]));
-                const lows = klines1h.map(k => parseFloat(k[3]));
+            // 3. Full Trade Opportunity Check for TTMSqueezeBreakoutElite (15m)
+            const klines15mTTM = klines15m || await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=55`);
+            if (Array.isArray(klines15mTTM) && klines15mTTM.length >= 35) {
+                const closes = klines15mTTM.map(k => parseFloat(k[4]));
+                const highs = klines15mTTM.map(k => parseFloat(k[2]));
+                const lows = klines15mTTM.map(k => parseFloat(k[3]));
                 const lastClose = closes[closes.length - 1];
-                const lastOpen = parseFloat(klines1h[klines1h.length - 1][1]);
+                const lastOpen = parseFloat(klines15mTTM[klines15mTTM.length - 1][1]);
                 const lastHigh = highs[highs.length - 1];
                 const lastLow = lows[lows.length - 1];
-                const lastVol = parseFloat(klines1h[klines1h.length - 1][5]);
+                const lastVol = parseFloat(klines15mTTM[klines15mTTM.length - 1][5]);
 
-                // 24-hour high/low (previous 24 completed 1h candles)
-                const rangeHigh24 = Math.max(...highs.slice(-25, -1));
-                const candleRange = lastHigh - lastLow;
-                const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-                const closePosition = (lastClose - lastLow) / (candleRange + 1e-8);
+                // 20-period SMA & StDev for Bollinger Bands
+                const closes20 = closes.slice(-20);
+                const sma20 = closes20.reduce((a, b) => a + b, 0) / 20;
+                const variance = closes20.reduce((a, b) => a + Math.pow(b - sma20, 2), 0) / 20;
+                const std20 = Math.sqrt(variance);
+                const bbUpper = sma20 + (2.0 * std20);
+                const bbLower = sma20 - (2.0 * std20);
+
+                // Approximate ATR 20 & Keltner Channels
+                const trArr = [];
+                for (let i = closes.length - 20; i < closes.length; i++) {
+                    const prevC = closes[i - 1];
+                    const tr = Math.max(highs[i] - lows[i], Math.abs(highs[i] - prevC), Math.abs(lows[i] - prevC));
+                    trArr.push(tr);
+                }
+                const atr20 = trArr.reduce((a, b) => a + b, 0) / trArr.length;
+                const kcUpper = sma20 + (1.5 * atr20);
+                const kcLower = sma20 - (1.5 * atr20);
+
+                const isSqueezed = (bbLower > kcLower) && (bbUpper < kcUpper);
+                const rsi15m = calculateRSI(closes, 14);
 
                 // Volume 20 SMA
-                const volumes20 = klines1h.slice(-21, -1).map(k => parseFloat(k[5]));
+                const volumes20 = klines15mTTM.slice(-21, -1).map(k => parseFloat(k[5]));
                 const volSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
 
-                const rsi1h = calculateRSI(closes, 14);
+                const candleRange = lastHigh - lastLow;
+                const body = Math.abs(lastClose - lastOpen);
+                const upperWick = lastHigh - Math.max(lastOpen, lastClose);
 
-                const isCompoundBreakout = (
-                    (lastClose > rangeHigh24) &&
-                    (lastClose > lastOpen) &&
-                    (lastVol > volSma20 * 1.7) &&
-                    (closePosition >= 0.65) &&
-                    (upperWick <= candleRange * 0.30) &&
-                    (rsi1h >= 54 && rsi1h <= 78)
+                // Squeeze Breakout criteria:
+                const isTTMBreakout = (
+                    lastClose > sma20 &&
+                    lastClose > lastOpen &&
+                    body >= candleRange * 0.45 &&
+                    upperWick <= body * 1.1 &&
+                    rsi15m >= 53 && rsi15m <= 66 &&
+                    lastVol > volSma20 * 0.95
                 );
 
-                const compoundKey = `DONCHIAN_FULL_${pair}`;
-                const lastCompoundTime = lastModeAlertTimes[compoundKey] || 0;
+                const ttmKey = `TTM_FULL_${pair}`;
+                const lastTTMTime = lastModeAlertTimes[ttmKey] || 0;
 
-                if (isCompoundBreakout && (now - lastCompoundTime > 60 * 60 * 1000)) {
-                    lastModeAlertTimes[compoundKey] = now;
+                if (isTTMBreakout && (now - lastTTMTime > 45 * 60 * 1000)) {
+                    lastModeAlertTimes[ttmKey] = now;
 
                     let isWalletFree = true;
                     let openTradesCount = 0;
@@ -2349,19 +2368,18 @@ async function checkStrategyModes() {
                         }
                     } catch (err) {}
 
-                    const compoundMsg = `💎 *DONCHIAN PRO BREAKOUT DETECTED!*\n` +
-                                       `────────────────────\n` +
-                                       `🤖 *Strategy:* HighFrequencyCompoundElite (1h)\n` +
-                                       `🪙 *Pair:* *${pair}*\n` +
-                                       `📍 *Breakout Price:* $${lastClose}\n` +
-                                       `🏔️ *24h Range High:* $${rangeHigh24}\n` +
-                                       `📊 *RSI (14):* ${rsi1h.toFixed(1)} (Bullish Momentum)\n` +
-                                       `🔥 *Volume Surge:* ${(lastVol / (volSma20 || 1)).toFixed(1)}x of 20-SMA\n` +
-                                       `⚡ *Priority:* High Priority (Triggers Auto-Preemption if needed)\n` +
-                                       `⏰ *Time:* ${toKarachiTime(new Date())}`;
+                    const ttmMsg = `🎯 *TTM SQUEEZE BREAKOUT DETECTED!*\n` +
+                                   `────────────────────\n` +
+                                   `🤖 *Strategy:* TTMSqueezeBreakoutElite (15m)\n` +
+                                   `🪙 *Pair:* *${pair}*\n` +
+                                   `📍 *Breakout Entry:* $${lastClose}\n` +
+                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Bullish Momentum)\n` +
+                                   `🌀 *Bollinger / Keltner:* Volatility Expansion Triggered\n` +
+                                   `🔥 *Volume Participation:* ${(lastVol / (volSma20 || 1)).toFixed(1)}x of 20-SMA\n` +
+                                   `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sendWhatsAppSafe(TARGET_JID, { text: compoundMsg });
-                    console.log(`Automated Compound Pro Breakout alert sent for ${pair}`);
+                    await sendWhatsAppSafe(TARGET_JID, { text: ttmMsg });
+                    console.log(`Automated TTM Squeeze Breakout alert sent for ${pair}`);
                 }
             }
         } catch (e) {
