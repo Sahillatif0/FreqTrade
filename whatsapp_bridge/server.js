@@ -36,31 +36,44 @@ app.use(express.json());
 
 const BRIDGE_PORT = 5001;
 
-// Helper to auto-load bot API credentials from userdata/config_bot*.json if present
-function loadBotConfig(configFile, defaults) {
-    const configPath = path.join(__dirname, '..', 'userdata', configFile);
-    if (fs.existsSync(configPath)) {
-        try {
-            const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            if (raw.api_server) {
-                return {
-                    ...defaults,
-                    host: (raw.api_server.listen_ip_address === '0.0.0.0' || !raw.api_server.listen_ip_address) ? '127.0.0.1' : raw.api_server.listen_ip_address,
-                    port: raw.api_server.listen_port || defaults.port,
-                    username: raw.api_server.username || defaults.username,
-                    password: raw.api_server.password || defaults.password
-                };
+// Helper to auto-load bot API credentials from candidate filenames across paths
+function loadBotConfig(candidateFiles, defaults) {
+    const files = Array.isArray(candidateFiles) ? candidateFiles : [candidateFiles];
+    const candidateDirs = [
+        path.join(__dirname, '..', 'userdata'),
+        path.join(__dirname, '..', 'user_data'),
+        path.join(__dirname, '..')
+    ];
+
+    for (const dir of candidateDirs) {
+        for (const file of files) {
+            const configPath = path.join(dir, file);
+            if (fs.existsSync(configPath)) {
+                try {
+                    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    if (raw.api_server) {
+                        return {
+                            ...defaults,
+                            host: (raw.api_server.listen_ip_address === '0.0.0.0' || !raw.api_server.listen_ip_address) ? '127.0.0.1' : raw.api_server.listen_ip_address,
+                            port: raw.api_server.listen_port || defaults.port,
+                            username: raw.api_server.username || defaults.username,
+                            password: raw.api_server.password || defaults.password
+                        };
+                    }
+                } catch (e) {
+                    console.warn(`[ConfigLoader] Could not parse ${configPath}: ${e.message}`);
+                }
             }
-        } catch (e) {
-            console.warn(`[ConfigLoader] Could not parse ${configFile}: ${e.message}`);
         }
     }
     return defaults;
 }
 
 // Tri-Bot Freqtrade API Server Config with auto-detection from config files
+// Supports both VPS config names ('config.json', 'config_ignite.json', 'config_breakout.json')
+// and local workspace config names ('config_bot1_compound.json', etc.)
 const FT_BOTS = {
-    bot1: loadBotConfig('config.json', {
+    bot1: loadBotConfig(['config.json', 'config_bot1_compound.json', 'config_sweep.json'], {
         id: 1,
         name: 'High Frequency Compound Elite',
         tag: '⚡ COMPOUND ELITE',
@@ -69,7 +82,7 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot2: loadBotConfig('config_ignite.json', {
+    bot2: loadBotConfig(['config_ignite.json', 'config_bot2_ignition.json'], {
         id: 2,
         name: 'Trend Ignition Elite',
         tag: '🚀 TREND IGNITION ELITE',
@@ -78,7 +91,7 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig('config_breakout.json', {
+    bot3: loadBotConfig(['config_breakout.json', 'config_bot3_ttm.json', 'config_ttm.json'], {
         id: 3,
         name: 'TTM Squeeze Breakout Elite',
         tag: '🎯 TTM SQUEEZE ELITE',
@@ -271,7 +284,15 @@ async function sendWhatsAppSafe(rawDestination, content) {
             }
         }
 
-        await sock.sendMessage(targetJid, content);
+        const sentMsg = await sock.sendMessage(targetJid, content);
+        if (sentMsg?.key?.id) {
+            recentMessagesMap.set(sentMsg.key.id, sentMsg.message);
+            // Cap memory cache to latest 1000 messages
+            if (recentMessagesMap.size > 1000) {
+                const firstKey = recentMessagesMap.keys().next().value;
+                recentMessagesMap.delete(firstKey);
+            }
+        }
         return true;
     } catch (sendErr) {
         console.error(`Failed to send WhatsApp message to ${targetJid}:`, sendErr.message);
@@ -1791,6 +1812,10 @@ async function handleWhatsAppCommand(commandText, senderJid) {
     }
 }
 
+// In-memory retry counter cache and message store to permanently eliminate "Waiting for this message"
+const msgRetryCounterMap = new Map();
+const recentMessagesMap = new Map();
+
 async function startWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
@@ -1806,7 +1831,20 @@ async function startWhatsApp() {
         printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
-        generateHighQualityLinkPreview: true
+        generateHighQualityLinkPreview: true,
+        msgRetryCounterCache: {
+            get: (key) => msgRetryCounterMap.get(key),
+            set: (key, val) => msgRetryCounterMap.set(key, val),
+            del: (key) => msgRetryCounterMap.delete(key),
+            flushAll: () => msgRetryCounterMap.clear()
+        },
+        getMessage: async (key) => {
+            const cached = recentMessagesMap.get(key.id);
+            if (cached) return cached;
+            return {
+                conversation: 'Freqtrade Alert'
+            };
+        }
     });
 
     sock.ev.on('connection.update', (update) => {
