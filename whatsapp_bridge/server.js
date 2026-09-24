@@ -60,7 +60,7 @@ function loadBotConfig(configFile, defaults) {
 
 // Tri-Bot Freqtrade API Server Config with auto-detection from config files
 const FT_BOTS = {
-    bot1: loadBotConfig('config_bot1_compound.json', {
+    bot1: loadBotConfig('config.json', {
         id: 1,
         name: 'High Frequency Compound Elite',
         tag: '⚡ COMPOUND ELITE',
@@ -69,7 +69,7 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot2: loadBotConfig('config_bot2_ignition.json', {
+    bot2: loadBotConfig('config_ignite.json', {
         id: 2,
         name: 'Trend Ignition Elite',
         tag: '🚀 TREND IGNITION ELITE',
@@ -78,7 +78,7 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig('config_bot3_ttm.json', {
+    bot3: loadBotConfig('config_breakout.json', {
         id: 3,
         name: 'TTM Squeeze Breakout Elite',
         tag: '🎯 TTM SQUEEZE ELITE',
@@ -2331,10 +2331,30 @@ async function checkStrategyModes() {
                 const kcUpper = sma20 + (1.5 * atr20);
                 const kcLower = sma20 - (1.5 * atr20);
 
-                const isSqueezed = (bbLower > kcLower) && (bbUpper < kcUpper);
-                const rsi15m = calculateRSI(closes, 14);
+                // Function to check if a specific bar was in squeeze
+                const checkSqueezeAt = (idx) => {
+                    if (idx < 20) return false;
+                    const cSlice = closes.slice(idx - 19, idx + 1);
+                    const mean = cSlice.reduce((a, b) => a + b, 0) / 20;
+                    const v = cSlice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / 20;
+                    const sd = Math.sqrt(v);
+                    const bUp = mean + (2.0 * sd);
+                    const bLow = mean - (2.0 * sd);
+                    let sumTr = 0;
+                    for (let j = idx - 19; j <= idx; j++) {
+                        const pC = closes[j - 1];
+                        sumTr += Math.max(highs[j] - lows[j], Math.abs(highs[j] - pC), Math.abs(lows[j] - pC));
+                    }
+                    const atr = sumTr / 20;
+                    return (bLow > (mean - 1.5 * atr)) && (bUp < (mean + 1.5 * atr));
+                };
 
-                // Volume 20 SMA
+                const lastIdx = closes.length - 1;
+                const prevSqueeze1 = checkSqueezeAt(lastIdx - 1);
+                const prevSqueeze2 = checkSqueezeAt(lastIdx - 2);
+                const prevSqueezeStreak = (prevSqueeze1 ? 1 : 0) + (prevSqueeze2 ? 1 : 0);
+
+                const rsi15m = calculateRSI(closes, 14);
                 const volumes20 = klines15mTTM.slice(-21, -1).map(k => parseFloat(k[5]));
                 const volSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
 
@@ -2342,14 +2362,22 @@ async function checkStrategyModes() {
                 const body = Math.abs(lastClose - lastOpen);
                 const upperWick = lastHigh - Math.max(lastOpen, lastClose);
 
-                // Squeeze Breakout criteria:
+                // Approximate EMA 50
+                const ema50Now = ema(50, closes);
+                const ema50Prev3 = ema(50, closes.slice(0, -3));
+                const ema50Slope = ((ema50Now - ema50Prev3) / ema50Prev3) * 100;
+
+                // Exact TTM Squeeze Breakout criteria matching strategy:
                 const isTTMBreakout = (
-                    lastClose > sma20 &&
-                    lastClose > lastOpen &&
-                    body >= candleRange * 0.45 &&
-                    upperWick <= body * 1.1 &&
-                    rsi15m >= 53 && rsi15m <= 66 &&
-                    lastVol > volSma20 * 0.95
+                    prevSqueezeStreak >= 2 &&               // REQUIRED: True coiled compression (at least 2 squeezed bars prior)
+                    lastClose > sma20 &&                    // Above baseline
+                    lastClose > ema50Now &&                 // Bullish macro trend
+                    ema50Slope >= 0.015 &&                  // Clearly sloping up
+                    lastClose > lastOpen &&                 // Solid green bar
+                    body >= candleRange * 0.45 &&           // Strong body, not an exhausted wick
+                    upperWick <= body * 1.1 &&              // Sellers not rejecting from top
+                    rsi15m >= 53 && rsi15m <= 66 &&         // Non-overbought sweet spot
+                    lastVol > volSma20 * 0.95               // High volume participation
                 );
 
                 const ttmKey = `TTM_FULL_${pair}`;
