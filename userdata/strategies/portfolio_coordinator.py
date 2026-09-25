@@ -10,9 +10,9 @@ USERDATA_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
-    "HighFrequencyCompoundElite": 3,
+    "TTMSqueezeBreakoutElite": 3,
     "TrendIgnitionElite": 2,
-    "TTMSqueezeBreakoutElite": 1
+    "HighFrequencyCompoundElite": 1
 }
 
 def get_state() -> dict:
