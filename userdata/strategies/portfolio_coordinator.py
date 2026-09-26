@@ -11,6 +11,7 @@ STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
     "TTMSqueezeBreakoutElite": 3,
+    "TrendIgnitionSimplePullback": 2,
     "TrendIgnitionElite": 2,
     "HighFrequencyCompoundElite": 1
 }

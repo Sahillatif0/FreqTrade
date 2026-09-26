@@ -82,10 +82,10 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot2: loadBotConfig(['config_ignite.json', 'config_bot2_ignition.json'], {
+    bot2: loadBotConfig(['config_ignite.json', 'config_bot2_ignition.json', 'config_pullback.json'], {
         id: 2,
-        name: 'Trend Ignition Elite',
-        tag: '🚀 TREND IGNITION ELITE',
+        name: 'Trend Ignition Simple Pullback',
+        tag: '🚀 PULLBACK DIP ELITE',
         host: '127.0.0.1',
         port: 8081,
         username: 'freqtrader',
@@ -184,11 +184,12 @@ const STRATEGY_ROI_TABLES = {
         { min: 35,  roi: 0.018 },
         { min: 0,   roi: 0.025 }
     ],
-    bot2: [ // TrendIgnitionElite (15m): {"0": 0.028, "30": 0.019, "75": 0.013, "150": 0.008}
-        { min: 150, roi: 0.008 },
-        { min: 75,  roi: 0.013 },
-        { min: 30,  roi: 0.019 },
-        { min: 0,   roi: 0.028 }
+    bot2: [ // TrendIgnitionSimplePullback (15m): {"0": 0.045, "30": 0.032, "60": 0.024, "120": 0.016, "240": 0.009}
+        { min: 240, roi: 0.009 },
+        { min: 120, roi: 0.016 },
+        { min: 60,  roi: 0.024 },
+        { min: 30,  roi: 0.032 },
+        { min: 0,   roi: 0.045 }
     ],
     bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.035, "30": 0.024, "60": 0.018, "120": 0.012, "240": 0.009}
         { min: 240, roi: 0.009 },
