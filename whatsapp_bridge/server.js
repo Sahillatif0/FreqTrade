@@ -184,12 +184,13 @@ const STRATEGY_ROI_TABLES = {
         { min: 35,  roi: 0.018 },
         { min: 0,   roi: 0.025 }
     ],
-    bot2: [ // TrendIgnitionSimplePullback (15m): {"0": 0.045, "30": 0.032, "60": 0.024, "120": 0.016, "240": 0.009}
-        { min: 240, roi: 0.009 },
-        { min: 120, roi: 0.016 },
-        { min: 60,  roi: 0.024 },
-        { min: 30,  roi: 0.032 },
-        { min: 0,   roi: 0.045 }
+    bot2: [ // TrendIgnitionSimplePullback (15m): {"0": 0.038, "15": 0.030, "45": 0.021, "90": 0.017, "180": 0.012, "360": 0.005}
+        { min: 360, roi: 0.005 },
+        { min: 180, roi: 0.012 },
+        { min: 90,  roi: 0.017 },
+        { min: 45,  roi: 0.021 },
+        { min: 15,  roi: 0.030 },
+        { min: 0,   roi: 0.038 }
     ],
     bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.035, "30": 0.024, "60": 0.018, "120": 0.012, "240": 0.009}
         { min: 240, roi: 0.009 },
@@ -2284,24 +2285,34 @@ async function checkStrategyModes() {
                 const ema50Slope = ((ema50Now - ema50Prev4) / ema50Prev4) * 100;
 
                 const rsi15m = calculateRSI(closes, 14);
+                const lastLow = parseFloat(klines15m[klines15m.length - 1][3]);
 
-                // Trend Ignition Strategy Execution Rules:
-                const isFullIgnitionOpp = (
-                    (ema9Now > ema21Now) && (ema9Prev <= ema21Prev) &&   // EMA 9 crosses over EMA 21
-                    (lastClose > ema50Now) &&                            // Close above EMA 50
-                    (lastClose > lastOpen) &&                            // Bullish green candle
-                    (ema50Slope >= 0.02) &&                              // Bullish macro slope
-                    (rsi15m >= 55 && rsi15m <= 68) &&                    // Momentum sweet spot
-                    (lastVolume > (volumeSma20 * 0.9))                   // Volume participation
+                // TrendIgnitionSimplePullback Execution Rules:
+                // 1. Bullish moving average alignment: EMA 9 > EMA 21
+                // 2. Macro trend alignment: Close > EMA 50
+                // 3. Slope confirmation: EMA 50 Slope >= 0.015%
+                // 4. Dip touch: Low touches/dips near EMA 9 (<= EMA 9 * 1.002)
+                // 5. Rebound confirmation: Close holds above EMA 9 * 0.998 and Green candle (Close > Open)
+                // 6. RSI sweet spot: 46 - 63
+                // 7. Volume participation: Volume > 20-SMA * 0.75
+                const isPullbackDipOpp = (
+                    (ema9Now > ema21Now) &&
+                    (lastClose > ema50Now) &&
+                    (ema50Slope >= 0.015) &&
+                    (lastLow <= ema9Now * 1.002) &&
+                    (lastClose >= ema9Now * 0.998) &&
+                    (lastClose > lastOpen) &&
+                    (rsi15m >= 46 && rsi15m <= 63) &&
+                    (lastVolume > (volumeSma20 * 0.75))
                 );
 
-                const ignitionKey = `IGNITION_FULL_${pair}`;
+                const ignitionKey = `IGNITION_PULLBACK_${pair}`;
                 const lastIgnitionTime = lastModeAlertTimes[ignitionKey] || 0;
 
-                if (isFullIgnitionOpp && (now - lastIgnitionTime > 30 * 60 * 1000)) {
+                if (isPullbackDipOpp && (now - lastIgnitionTime > 30 * 60 * 1000)) {
                     lastModeAlertTimes[ignitionKey] = now;
 
-                    // Query Bot 2 (Trend Ignition Elite) open trades to verify wallet availability
+                    // Query Bot 2 (Trend Ignition Simple Pullback) open trades to verify wallet availability
                     let isWalletFree = true;
                     let openTradesCount = 0;
                     try {
@@ -2319,23 +2330,25 @@ async function checkStrategyModes() {
                         : `⚠️ *Wallet Status:* Slot Busy (${openTradesCount} Active Trade)`;
 
                     const actionText = isWalletFree
-                        ? `Order dispatched / executed by Bot 2.`
-                        : `Missed execution due to occupied wallet slot!`;
+                        ? `🎯 Pullback Dip entry signal triggered & active!`
+                        : `⚠️ Signal live, but wallet slot currently occupied.`;
 
-                    const ignMsg = `🚀 *FULL TREND IGNITION OPPORTUNITY!*\n` +
+                    const ignMsg = `🚀 *TREND IGNITION PULLBACK SIGNAL!*\n` +
                                    `────────────────────\n` +
-                                   `🤖 *Strategy:* TrendIgnitionElite (15m)\n` +
+                                   `🤖 *Strategy:* TrendIgnitionSimplePullback (15m)\n` +
                                    `🪙 *Pair:* *${pair}*\n` +
-                                   `📍 *Entry Price:* $${lastClose}\n` +
-                                   `📈 *EMA 9 / 21:* Bullish Crossover ($${ema9Now.toFixed(4)} > $${ema21Now.toFixed(4)})\n` +
-                                   `🛡️ *Baseline EMA 50:* $${ema50Now.toFixed(4)} (Slope: +${ema50Slope.toFixed(3)}%)\n` +
-                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Sweet Spot: 55-68)\n` +
+                                   `📍 *Signal Price:* $${lastClose}\n` +
+                                   `📉 *Dip Retest:* Low reached $${lastLow.toFixed(4)} near EMA 9 ($${ema9Now.toFixed(4)})\n` +
+                                   `📈 *Trend Structure:* EMA 9 ($${ema9Now.toFixed(4)}) > EMA 21 ($${ema21Now.toFixed(4)})\n` +
+                                   `🛡️ *Macro EMA 50:* $${ema50Now.toFixed(4)} (Slope: +${ema50Slope.toFixed(3)}%)\n` +
+                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Pullback zone: 46-63)\n` +
+                                   `🔥 *Volume:* ${(lastVolume / (volumeSma20 || 1)).toFixed(2)}x of 20-SMA\n` +
                                    `${walletBadge}\n` +
-                                   `📦 *Action:* ${actionText}\n` +
+                                   `📦 *Status:* ${actionText}\n` +
                                    `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
                     await sendWhatsAppSafe(TARGET_JID, { text: ignMsg });
-                    console.log(`Automated Full Trend Ignition alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
+                    console.log(`Automated Trend Ignition Pullback alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
                 }
             }
 
