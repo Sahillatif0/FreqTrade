@@ -65,6 +65,15 @@ class TrendIgnitionSimplePullback(IStrategy):
     @property
     def protections(self):
         return [
+            # Solution 2: If a pair hits 1 Stoploss, pause that specific pair for 8 candles (2 hours)
+            # Baqi pairs freely trade karenge. Prevents consecutive bleed on AAVE/TIA.
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 12,
+                "trade_limit": 1,
+                "stop_duration_candles": 8,
+                "only_per_pair": True
+            },
             {
                 "method": "CooldownPeriod",
                 "stop_duration_candles": 2
@@ -72,9 +81,19 @@ class TrendIgnitionSimplePullback(IStrategy):
         ]
 
     def informative_pairs(self):
-        return []
+        return [("BTC/USDT", "1h")]
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Informative BTC/USDT 1h Trend Gate
+        if self.dp:
+            btc_1h = self.dp.get_pair_dataframe("BTC/USDT", "1h")
+            if not btc_1h.empty:
+                btc_1h["btc_ema_20"] = ta.EMA(btc_1h, timeperiod=20)
+                from freqtrade.strategy import merge_informative_pair
+                dataframe = merge_informative_pair(
+                    dataframe, btc_1h, self.timeframe, "1h", ffill=True
+                )
+
         # Moving Averages
         dataframe["ema_9"] = ta.EMA(dataframe, timeperiod=9)
         dataframe["ema_21"] = ta.EMA(dataframe, timeperiod=21)
@@ -87,6 +106,7 @@ class TrendIgnitionSimplePullback(IStrategy):
 
         # Momentum & Volatility
         dataframe["rsi"] = ta.RSI(dataframe, timeperiod=14)
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod=14)
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
 
         return dataframe
@@ -95,8 +115,14 @@ class TrendIgnitionSimplePullback(IStrategy):
         dataframe.loc[:, "enter_long"] = 0
         dataframe.loc[:, "enter_tag"] = ""
 
-        # Exact Pullback Dip Entry from 36.2% test:
+        # BTC 1h Bull Market Gate (Trade only when macro market is healthy)
+        btc_gate = True
+        if "btc_ema_20_1h" in dataframe.columns and "close_1h" in dataframe.columns:
+            btc_gate = (dataframe["close_1h"] > dataframe["btc_ema_20_1h"])
+
+        # Exact Pullback Dip Entry:
         pullback = (
+            btc_gate &
             (dataframe["ema_9"] > dataframe["ema_21"]) &
             (dataframe["close"] > dataframe["ema_50"]) &
             (dataframe["ema_50_slope"] >= 0.015) &
@@ -122,16 +148,6 @@ class TrendIgnitionSimplePullback(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[:, "exit_long"] = 0
         dataframe.loc[:, "exit_tag"] = ""
-
-        # Trend exhaustion exit: candle closes below EMA 21 and EMA 9 breaks EMA 21
-        trend_broken = (
-            (dataframe["close"] < dataframe["ema_21"]) &
-            (dataframe["ema_9"] < dataframe["ema_21"])
-        )
-
-        dataframe.loc[trend_broken, "exit_long"] = 1
-        dataframe.loc[trend_broken, "exit_tag"] = "trend_exhaustion"
-
         return dataframe
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
