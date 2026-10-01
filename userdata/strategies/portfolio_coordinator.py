@@ -13,7 +13,7 @@ PRIORITY = {
     "TTMSqueezeBreakoutElite": 3,
     "TrendIgnitionSimplePullback": 2,
     "TrendIgnitionElite": 2,
-    "HighFrequencyCompoundElite": 1
+    "HighFrequencySweepApex5m": 1
 }
 
 def get_state() -> dict:

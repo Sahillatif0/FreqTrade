@@ -73,10 +73,10 @@ function loadBotConfig(candidateFiles, defaults) {
 // Supports both VPS config names ('config.json', 'config_ignite.json', 'config_breakout.json')
 // and local workspace config names ('config_bot1_compound.json', etc.)
 const FT_BOTS = {
-    bot1: loadBotConfig(['config.json', 'config_bot1_compound.json', 'config_sweep.json'], {
+    bot1: loadBotConfig(['config_apex.json', 'config.json', 'config_bot1_compound.json', 'config_sweep.json'], {
         id: 1,
-        name: 'High Frequency Compound Elite',
-        tag: '⚡ COMPOUND ELITE',
+        name: 'High Frequency Sweep Apex',
+        tag: '⚡ APEX SWEEP 5M',
         host: '127.0.0.1',
         port: 8080,
         username: 'freqtrader',
@@ -178,11 +178,9 @@ function saveCustomStopLosses() {
 }
 
 const STRATEGY_ROI_TABLES = {
-    bot1: [ // HighFrequencyCompoundElite (5m): {"0": 0.025, "35": 0.018, "75": 0.012, "150": 0.006}
-        { min: 150, roi: 0.006 },
-        { min: 75,  roi: 0.012 },
-        { min: 35,  roi: 0.018 },
-        { min: 0,   roi: 0.025 }
+    bot1: [ // HighFrequencySweepApex5m (5m): {"0": 0.0170, "180": 0.005}
+        { min: 180, roi: 0.005 },
+        { min: 0,   roi: 0.017 }
     ],
     bot2: [ // TrendIgnitionSimplePullback (15m): {"0": 0.038, "15": 0.030, "45": 0.021, "90": 0.017, "180": 0.012, "360": 0.005}
         { min: 360, roi: 0.005 },
@@ -408,9 +406,9 @@ async function generateDailyDigest() {
         return `🌅 *DAILY TRADING DIGEST (3-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
                `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
-               `   • Compound: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Apex Sweep: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `   • Ignition: ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Sweep 7: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • TTM Squeeze: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
                `📊 *Active Trades:* ${openCount} open\n` +
@@ -418,7 +416,7 @@ async function generateDailyDigest() {
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_Compound (5m), Ignition (15m) & Sweep (5m) active!_ 🚀`;
+               `_Apex Sweep (5m), Ignition (15m) & TTM Squeeze (15m) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -676,8 +674,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
             return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
-                   `📊 */status* - Active open trades across all 3 bots\n` +
-                   `   • */status 1* (Compound) | */status 2* (Ignition) | */status 3* (TTM Squeeze)\n` +
+                    `📊 */status* - Active open trades across all 3 bots\n` +
+                   `   • */status 1* (Apex Sweep) | */status 2* (Ignition) | */status 3* (TTM Squeeze)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
                    `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
                    `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
@@ -700,7 +698,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `▶️ */start [1/2/3/all]* - Resume trading\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Automated Preemption ensures Compound (P3) & Trend (P2) get priority over TTM (P1)!_`;
+                   `_Tip: Automated Preemption ensures TTM (P3) & Trend (P2) get priority over Apex (P1)!_`;
         }
 
 
@@ -1798,11 +1796,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             return `ℹ️ *TRI-BOT SYSTEM STATUS*\n────────────────────\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencyCompoundElite (5m Scalp | Priority 3)\n\n` +
+                   `   Strategy: HighFrequencySweepApex5m (5m Micro-Sweep | Priority 1)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
                    `   Strategy: TrendIgnitionElite (15m Momentum | Priority 2)\n\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 1)\n\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 3)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -2093,8 +2091,8 @@ app.post('/preemption-alert', async (req, res) => {
 
         let messageText = '';
         if (data.event === 'PREEMPTION_REQUESTED') {
-            const inStrat = data.incoming_strategy || 'HighFrequencyCompoundElite';
-            const curStrat = data.current_strategy || 'HighFrequencySweepElite7';
+            const inStrat = data.incoming_strategy || 'HighFrequencySweepApex5m';
+            const curStrat = data.current_strategy || 'HighFrequencySweepApex5m';
             messageText = `⚡ *PORTFOLIO PREEMPTION TRIGGERED!*\n` +
                           `────────────────────\n` +
                           `🎯 *High-Value Signal:* *${data.incoming_pair}* [${inStrat}]\n` +
@@ -2102,7 +2100,7 @@ app.post('/preemption-alert', async (req, res) => {
                           `⚖️ *Action:* Coordinator requesting safe exit to release wallet capital!\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else if (data.event === 'BALANCE_RELEASED') {
-            const inStrat = data.incoming_strategy || 'HighFrequencyCompoundElite';
+            const inStrat = data.incoming_strategy || 'HighFrequencySweepApex5m';
             const relStrat = data.released_from_strategy || 'Sweep';
             messageText = `✅ *CAPITAL RELEASED FOR EXECUTION!*\n` +
                           `────────────────────\n` +
@@ -2235,7 +2233,7 @@ async function checkStrategyModes() {
 
                     const eliteMsg = `⚡ *FULL TRADE OPPORTUNITY DETECTED!*\n` +
                                      `────────────────────\n` +
-                                     `🤖 *Strategy:* HighFrequencyCompoundElite (5m Scalp)\n` +
+                                     `🤖 *Strategy:* HighFrequencySweepApex5m (5m Scalp)\n` +
                                      `🪙 *Pair:* *${pair}*\n` +
                                      `📍 *Entry Price:* $${currentClose}\n` +
                                      `🛡️ *18-Bar Swing Low:* $${swingLow18}\n` +
