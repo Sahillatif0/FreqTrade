@@ -44,10 +44,10 @@ class TTMSqueezeBreakoutElite(IStrategy):
         "240": 0.009     # Capital turnover floor (+0.9%)
     }
 
-    stoploss = -0.020
+    stoploss = -0.022
     trailing_stop = True
-    trailing_stop_positive = 0.010
-    trailing_stop_positive_offset = 0.016
+    trailing_stop_positive = 0.007
+    trailing_stop_positive_offset = 0.014
     trailing_only_offset_is_reached = True
 
     process_only_new_candles = True
@@ -103,6 +103,9 @@ class TTMSqueezeBreakoutElite(IStrategy):
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
         dataframe["upper_wick"] = dataframe["high"] - dataframe[["open", "close"]].max(axis=1)
 
+        # Distance from EMA-20: Prevent buying climax tops that are over-extended (> 3.0% above 20 EMA)
+        dataframe["dist_ema20_pct"] = (dataframe["close"] - dataframe["ema_20"]) / dataframe["ema_20"] * 100
+
         # MACD Histogram
         macd = ta.MACD(dataframe)
         dataframe["macd_hist"] = macd["macdhist"]
@@ -121,12 +124,13 @@ class TTMSqueezeBreakoutElite(IStrategy):
             (dataframe["ema_50_slope"] >= 0.015) &                            # Clearly sloping up
             (dataframe["close"] > dataframe["open"]) &                        # Solid green bar
             (dataframe["body"] >= dataframe["candle_range"] * 0.45) &         # Strong body, not an exhausted wick
-            (dataframe["upper_wick"] <= dataframe["body"] * 1.1) &            # Sellers not rejecting from top
+            (dataframe["upper_wick"] <= dataframe["body"] * 0.9) &            # Tighter top wick control (no rejection)
+            (dataframe["dist_ema20_pct"] <= 3.0) &                            # Anti-Top Filter: Not over-extended from mean
             (dataframe["adx"] >= 19) &                                        # Clear trend strength (eliminates chop)
             (dataframe["macd_hist"] > 0) &                                    # Positive momentum
             (dataframe["macd_hist"] > dataframe["macd_hist"].shift(1)) &      # Accelerating impulse
             (dataframe["rsi"] >= 53) & (dataframe["rsi"] <= 66) &            # Non-overbought sweet spot
-            (dataframe["volume"] > dataframe["volume_sma"] * 0.95)            # High volume participation
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.25)           # High volume breakout confirmation
         )
 
         dataframe.loc[squeeze_breakout, "enter_long"] = 1
