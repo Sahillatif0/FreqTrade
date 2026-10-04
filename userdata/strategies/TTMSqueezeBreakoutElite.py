@@ -46,8 +46,8 @@ class TTMSqueezeBreakoutElite(IStrategy):
 
     stoploss = -0.022
     trailing_stop = True
-    trailing_stop_positive = 0.007
-    trailing_stop_positive_offset = 0.014
+    trailing_stop_positive = 0.005
+    trailing_stop_positive_offset = 0.016
     trailing_only_offset_is_reached = True
 
     process_only_new_candles = True

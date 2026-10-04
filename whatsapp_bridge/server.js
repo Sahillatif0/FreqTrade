@@ -696,6 +696,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🔄 */reload [1/2/3/all]* - Reload bot configs\n` +
                    `⏸️ */stop [1/2/3/all]* - Pause trading (stop buying)\n` +
                    `▶️ */start [1/2/3/all]* - Resume trading\n` +
+                   `🛡️ */protection [1/2/3]* - Circuit breaker & stoploss lockout status\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
                    `_Tip: Automated Preemption ensures TTM (P3) & Trend (P2) get priority over Apex (P1)!_`;
@@ -1804,6 +1805,60 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
+        if (cmd === '/protection' || cmd === '/protections' || cmd === '/locks' || cmd === 'protection' || cmd === 'locks' || cmd.startsWith('/protection ') || cmd.startsWith('protection ') || cmd.startsWith('/locks ') || cmd.startsWith('locks ')) {
+            const parts = commandText.trim().split(/\s+/);
+            const targetArg = parts[1]?.toLowerCase();
+
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze') botsToQuery = [FT_BOTS.bot3];
+
+            const results = await Promise.all(
+                botsToQuery.map(async (b) => {
+                    try {
+                        const data = await callFreqtradeApi('/locks', 'GET', null, b);
+                        const lockList = Array.isArray(data) ? data : (data?.locks || []);
+                        return { bot: b, locks: lockList, error: null };
+                    } catch (err) {
+                        return { bot: b, locks: [], error: err.message };
+                    }
+                })
+            );
+
+            let msg = `🛡️ *CIRCUIT BREAKER & PROTECTION STATUS*\n────────────────────\n`;
+            let totalLocks = 0;
+
+            for (const { bot, locks, error } of results) {
+                msg += `🤖 *${bot.tag}* (Port ${bot.port}):\n`;
+                if (error) {
+                    msg += `   ⚠️ Offline / Unreachable (${error})\n\n`;
+                    continue;
+                }
+                const activeLocks = locks.filter(l => l.active !== false);
+                if (activeLocks.length === 0) {
+                    const ruleDesc = bot.id === 1 ? 'StoplossGuard active (2 losses in 14h -> 12h pause)' : 'Protection Guard Active';
+                    msg += `   🟢 *Status:* Ready (No active locks)\n   🛡️ *Rule:* ${ruleDesc}\n\n`;
+                } else {
+                    totalLocks += activeLocks.length;
+                    for (const l of activeLocks) {
+                        const lockPair = l.pair || 'Global (All Pairs)';
+                        const endTime = l.lock_end_time ? toKarachiTime(new Date(l.lock_end_time)) : 'N/A';
+                        msg += `   🔒 *Locked:* ${lockPair}\n` +
+                               `   ⚠️ *Reason:* ${l.reason || 'StoplossGuard triggered'}\n` +
+                               `   ⏳ *Unlocks At:* ${endTime}\n\n`;
+                    }
+                }
+            }
+
+            if (totalLocks > 0) {
+                msg += `_Note: Active locks prevent knife-catches during heavy volatility. Once timer expires, trading resumes automatically._`;
+            } else {
+                msg += `_All bots are actively shielded against multi-loss cascades._`;
+            }
+            return msg.trim();
+        }
+
 
         return null; // unrecognized message, ignore
     } catch (error) {
@@ -1983,6 +2038,26 @@ app.post('/trade-alert', async (req, res) => {
                           `💵 *Profit Amount:* ${data.profit_amount || '0'} USDT\n` +
                           `🚪 *Exit Reason:* ${data.exit_reason || 'roi'}\n` +
                           `⏰ *Duration:* ${data.duration || 'N/A'}\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (type === 'protection_trigger' || type === 'protection_trigger_global' || data.event_type === 'protection_trigger' || data.event_type === 'protection_trigger_global') {
+            const isGlobal = type === 'protection_trigger_global' || data.event_type === 'protection_trigger_global' || !data.pair || data.pair === '*';
+            const pairDisplay = isGlobal ? '🌐 ALL PAIRS (Global Circuit Breaker)' : `🪙 *Pair:* ${data.pair}`;
+            let resumeTime = data.lock_end_time;
+            try {
+                if (data.lock_end_time) {
+                    resumeTime = toKarachiTime(new Date(data.lock_end_time));
+                }
+            } catch (e) {
+                resumeTime = data.lock_end_time || 'Pending duration';
+            }
+
+            messageText = `🛡️ *${botTitle} CIRCUIT BREAKER ACTIVATED*\n` +
+                          `────────────────────\n` +
+                          `⚠️ *Trigger Reason:* *${data.reason || 'StoplossGuard Protection'}*\n` +
+                          `🔒 *Scope:* ${pairDisplay}\n` +
+                          `⏳ *Halt Duration:* *${data.lock_duration || '12 Hours'}*\n` +
+                          `⏰ *Trading Resumes:* *${resumeTime || 'After cooldown'}*\n` +
+                          `💡 *Protection:* New entries halted to prevent cascading loss streak!\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else {
             messageText = `🤖 *${botTitle} ALERT*\n` +

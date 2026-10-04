@@ -59,7 +59,14 @@ class HighFrequencySweepApex5m(IStrategy):
         return [
             {
                 "method": "CooldownPeriod",
-                "stop_duration_candles": 1
+                "stop_duration_candles": 2
+            },
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 168,
+                "trade_limit": 2,
+                "stop_duration_candles": 144,
+                "only_per_pair": False
             }
         ]
 
