@@ -82,16 +82,16 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot2: loadBotConfig(['config_ignite.json', 'config_bot2_ignition.json', 'config_pullback.json'], {
+    bot2: loadBotConfig(['config_sweep_pro.json', 'config_bot2_sweep_pro.json', 'config_ignite.json', 'config_bot2_ignition.json', 'config_pullback.json'], {
         id: 2,
-        name: 'Trend Ignition Simple Pullback',
-        tag: '🚀 PULLBACK DIP ELITE',
+        name: 'Liquidity Sweep Pro 15m',
+        tag: '🌊 SWEEP PRO 15M',
         host: '127.0.0.1',
         port: 8081,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig(['config_breakout.json', 'config_bot3_ttm.json', 'config_ttm.json'], {
+    bot3: loadBotConfig(['config_bot3_ttm.json', 'config_ttm_perfect.json', 'config_breakout.json', 'config_ttm.json'], {
         id: 3,
         name: 'TTM Squeeze Breakout Elite',
         tag: '🎯 TTM SQUEEZE ELITE',
@@ -182,13 +182,12 @@ const STRATEGY_ROI_TABLES = {
         { min: 180, roi: 0.005 },
         { min: 0,   roi: 0.017 }
     ],
-    bot2: [ // TrendIgnitionSimplePullback (15m): {"0": 0.038, "15": 0.030, "45": 0.021, "90": 0.017, "180": 0.012, "360": 0.005}
-        { min: 360, roi: 0.005 },
-        { min: 180, roi: 0.012 },
-        { min: 90,  roi: 0.017 },
-        { min: 45,  roi: 0.021 },
-        { min: 15,  roi: 0.030 },
-        { min: 0,   roi: 0.038 }
+    bot2: [ // LiquiditySweepPro15m (15m): {"0": 0.032, "60": 0.022, "120": 0.015, "240": 0.010, "360": 0.007}
+        { min: 360, roi: 0.007 },
+        { min: 240, roi: 0.010 },
+        { min: 120, roi: 0.015 },
+        { min: 60,  roi: 0.022 },
+        { min: 0,   roi: 0.032 }
     ],
     bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.035, "30": 0.024, "60": 0.018, "120": 0.012, "240": 0.009}
         { min: 240, roi: 0.009 },
@@ -406,9 +405,9 @@ async function generateDailyDigest() {
         return `🌅 *DAILY TRADING DIGEST (3-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
                `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
-               `   • Apex Sweep: ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Ignition: ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • TTM Squeeze: ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Sweep Pro (P2): ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Apex Sweep (P1): ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • TTM Squeeze (P3): ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
                `📊 *Active Trades:* ${openCount} open\n` +
@@ -416,7 +415,7 @@ async function generateDailyDigest() {
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_Apex Sweep (5m), Ignition (15m) & TTM Squeeze (15m) active!_ 🚀`;
+               `_TTM Squeeze (P3), Sweep Pro (P2) & Apex Sweep (P1) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -675,7 +674,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
                     `📊 */status* - Active open trades across all 3 bots\n` +
-                   `   • */status 1* (Apex Sweep) | */status 2* (Ignition) | */status 3* (TTM Squeeze)\n` +
+                   `   • */status 1* (Apex Sweep) | */status 2* (Sweep Pro) | */status 3* (TTM Squeeze)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
                    `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
                    `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
@@ -699,7 +698,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🛡️ */protection [1/2/3]* - Circuit breaker & stoploss lockout status\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Automated Preemption ensures TTM (P3) & Trend (P2) get priority over Apex (P1)!_`;
+                   `_Tip: Automated Preemption ensures TTM (P3) & Sweep Pro (P2) get priority over Apex (P1)!_`;
         }
 
 
@@ -708,9 +707,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const targetArg = parts[1]?.toLowerCase();
 
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
-            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'compound' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -741,9 +740,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else {
                     msg += `🟢 No active open trades right now.\n` +
                            `All 3 bots are scanning for high-probability setups! 🔍\n\n` +
-                           `• ⚡ Sweep Elite 7 (Port ${FT_BOTS.bot1.port}): Scanning 5m\n` +
-                           `• 🚀 Trend Ignition (Port ${FT_BOTS.bot2.port}): Scanning 15m\n` +
-                           `• ⚡ Compound Elite (Port ${FT_BOTS.bot3.port}): Scanning 5m`;
+                           `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 3 - Master)\n` +
+                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2)\n` +
+                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1)`;
                 }
                 return msg.trim();
             }
@@ -789,11 +788,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     let defaultTpPct = '+2.5%';
 
                     if (bot.id === 2) {
-                        // TrendIgnitionElite (15m)
-                        defaultSlRatio = 0.978;
-                        defaultSlPct = '-2.2%';
-                        defaultTpRatio = 1.028;
-                        defaultTpPct = '+2.8%';
+                        // LiquiditySweepPro15m (15m)
+                        defaultSlRatio = 0.982;
+                        defaultSlPct = '-1.8%';
+                        defaultTpRatio = 1.032;
+                        defaultTpPct = '+3.2%';
                     } else if (bot.id === 3) {
                         // TTMSqueezeBreakoutElite (15m)
                         defaultSlRatio = 0.980;
@@ -859,9 +858,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let targetBot = 'all';
 
             for (let p of parts.slice(1)) {
-                if (p === '1' || p === 'sweep') targetBot = 'bot1';
-                else if (p === '2' || p === 'ignition') targetBot = 'bot2';
-                else if (p === '3' || p === 'compound') targetBot = 'bot3';
+                if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
+                else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
+                else if (p === '3' || p === 'ttm' || p === 'squeeze' || p === 'compound') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) limit = parseInt(p);
             }
 
@@ -915,7 +914,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                            `   ⏱️ *Hold Duration:* ${durStr}\n\n`;
                 });
 
-                msg += `_Tip: Use "/trades 1" (Sweep) or "/trades 2" (Ignition)_`;
+                msg += `_Tip: Use "/trades 1" (Apex), "/trades 2" (Sweep Pro), or "/trades 3" (TTM)_`;
                 return msg.trim();
             } catch (err) {
                 return `⚠️ Could not fetch trade history: ${err.message}`;
@@ -989,9 +988,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const targetArg = parts[1]?.toLowerCase();
 
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
-            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -1097,9 +1096,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const targetArg = parts[1]?.toLowerCase();
 
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
-            if (targetArg === '1' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
-            if (targetArg === '3' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
 
             try {
                 const results = await Promise.all(
@@ -1146,9 +1145,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let targetBot = 'all';
 
             for (const p of parts.slice(1)) {
-                if (p === '1' || p === 'sweep') targetBot = 'bot1';
-                else if (p === '2' || p === 'ignition') targetBot = 'bot2';
-                else if (p === '3' || p === 'compound') targetBot = 'bot3';
+                if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
+                else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
+                else if (p === '3' || p === 'ttm' || p === 'squeeze' || p === 'compound') targetBot = 'bot3';
                 else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
 
@@ -1231,15 +1230,15 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd.startsWith('/stop') || cmd.startsWith('stop')) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
-            if (targetArg === '1' || targetArg === 'sweep') {
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot1');
-                return `⏸️ *[${FT_BOTS.bot1.tag}] Paused*\nNew trade entries paused on Sweep Elite 7.`;
-            } else if (targetArg === '2' || targetArg === 'ignition') {
+                return `⏸️ *[${FT_BOTS.bot1.tag}] Paused*\nNew trade entries paused on High Frequency Sweep Apex.`;
+            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot2');
-                return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Trend Ignition Elite.`;
-            } else if (targetArg === '3' || targetArg === 'compound') {
+                return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Liquidity Sweep Pro 15m.`;
+            } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot3');
-                return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on Range Breakout Compound Pro.`;
+                return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on TTM Squeeze Breakout Elite.`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/stop', 'POST', null, 'bot1').catch(() => null),
@@ -1253,15 +1252,15 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd.startsWith('/start') || cmd.startsWith('start')) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
-            if (targetArg === '1' || targetArg === 'sweep') {
+            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot1');
-                return `▶️ *[${FT_BOTS.bot1.tag}] Resumed*\nScanning for liquidity sweeps!`;
-            } else if (targetArg === '2' || targetArg === 'ignition') {
+                return `▶️ *[${FT_BOTS.bot1.tag}] Resumed*\nScanning for 5m Apex liquidity sweeps!`;
+            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot2');
-                return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for trend ignition setups!`;
-            } else if (targetArg === '3' || targetArg === 'compound') {
+                return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for 15m macro liquidity sweep reclaims!`;
+            } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot3');
-                return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for Compound range breakouts!`;
+                return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for 15m TTM squeeze breakouts!`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/start', 'POST', null, 'bot1').catch(() => null),
@@ -1649,13 +1648,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
             try {
-                if (targetArg === '1' || targetArg === 'sweep') {
+                if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot1');
                     return `🔄 *[${FT_BOTS.bot1.tag}] Config & Pairlist Reloaded Successfully!*`;
-                } else if (targetArg === '2' || targetArg === 'ignition') {
+                } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot2');
                     return `🔄 *[${FT_BOTS.bot2.tag}] Config & Pairlist Reloaded Successfully!*`;
-                } else if (targetArg === '3' || targetArg === 'compound') {
+                } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot3');
                     return `🔄 *[${FT_BOTS.bot3.tag}] Config & Pairlist Reloaded Successfully!*`;
                 } else {
@@ -1790,7 +1789,12 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     if (st.status === 'BUSY') {
                         stateInfo = `BUSY (${st.active_strategy || 'Active'} on ${st.active_pair || 'Pair'})`;
                     } else if (st.pending_intent) {
-                        stateInfo = `WAITING PREEMPTION (${st.pending_intent.strategy} for ${st.pending_intent.pair})`;
+                        if (st.pending_intent.status === 'REJECTED_SOFT_FLOOR') {
+                            const pnl = st.pending_intent.current_profit !== undefined ? `${(st.pending_intent.current_profit * 100).toFixed(2)}%` : '< -0.50%';
+                            stateInfo = `SOFT FLOOR ACTIVE (Held drawdown: ${pnl} on ${st.active_pair || 'slot'})`;
+                        } else {
+                            stateInfo = `WAITING PREEMPTION (${st.pending_intent.strategy} for ${st.pending_intent.pair})`;
+                        }
                     }
                 }
             } catch (e) {}
@@ -1799,9 +1803,9 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
                    `   Strategy: HighFrequencySweepApex5m (5m Micro-Sweep | Priority 1)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: TrendIgnitionElite (15m Momentum | Priority 2)\n\n` +
+                   `   Strategy: LiquiditySweepPro15m (15m Macro Reclaim | Priority 2)\n\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 3)\n\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 3 - Master)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -1811,7 +1815,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze') botsToQuery = [FT_BOTS.bot3];
 
             const results = await Promise.all(
@@ -2015,9 +2019,17 @@ app.post('/trade-alert', async (req, res) => {
 
         if (type === 'entry' || data.event_type === 'entry') {
             const entryRate = parseFloat(data.open_rate || data.rate || 0);
-            const isIgnition = (data.bot_label && data.bot_label.includes('IGNITION')) || (data.enter_tag && data.enter_tag.includes('ignition'));
-            const slRatio = isIgnition ? 0.978 : 0.985;
-            const slPct = isIgnition ? '-2.2%' : '-1.5%';
+            const isSweepPro = (data.bot_label && (data.bot_label.includes('SWEEP PRO') || data.bot_label.includes('LIQUIDITY SWEEP'))) || (data.enter_tag && data.enter_tag.includes('macro_swing_reclaim'));
+            const isTTM = (data.bot_label && data.bot_label.includes('TTM')) || (data.enter_tag && (data.enter_tag.includes('squeeze') || data.enter_tag.includes('ttm')));
+            let slRatio = 0.985;
+            let slPct = '-1.5%';
+            if (isSweepPro) {
+                slRatio = 0.982;
+                slPct = '-1.8%';
+            } else if (isTTM) {
+                slRatio = 0.980;
+                slPct = '-2.0%';
+            }
             const sl = entryRate ? (entryRate * slRatio).toFixed(4) : 'N/A';
 
             messageText = `🟢 *${botTitle} BUY ORDER*\n` +
@@ -2096,26 +2108,34 @@ app.post('/mode-alert', async (req, res) => {
         const modeType = data.mode || data.type || 'SWEEP'; // 'SWEEP' or 'IGNITION'
         let messageText = '';
 
-        if (modeType.toUpperCase().includes('SWEEP')) {
-            messageText = `⚡ *SWEEP MODE DETECTED!*\n` +
+        if (modeType.toUpperCase().includes('PRO') || modeType.toUpperCase().includes('LIQUIDITY')) {
+            messageText = `🌊 *MACRO SWEEP RECLAIM DETECTED!*\n` +
                           `────────────────────\n` +
-                          `🤖 *Strategy:* HighFrequencySweepElite7 (5m)\n` +
+                          `🤖 *Strategy:* LiquiditySweepPro15m (15m)\n` +
+                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
+                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
+                          `🛡️ *24-Bar Swing Low:* $${data.swing_low || data.trigger_level || 'N/A'}\n` +
+                          `🔍 *Status:* Deep Liquidity Flush & Institutional Pinbar Rejection!\n` +
+                          `📦 *Action:* Bot ready to execute on confirmed 15m candle close.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (modeType.toUpperCase().includes('TTM') || modeType.toUpperCase().includes('SQUEEZE')) {
+            messageText = `🎯 *TTM SQUEEZE EXPANSION DETECTED!*\n` +
+                          `────────────────────\n` +
+                          `🤖 *Strategy:* TTMSqueezeBreakoutElite (15m)\n` +
+                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
+                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
+                          `🔍 *Status:* Bollinger Bands compressing inside Keltner Channel!\n` +
+                          `📦 *Action:* Volatility breakout fire imminent.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (modeType.toUpperCase().includes('SWEEP') || modeType.toUpperCase().includes('APEX')) {
+            messageText = `⚡ *APEX SWEEP MODE DETECTED!*\n` +
+                          `────────────────────\n` +
+                          `🤖 *Strategy:* HighFrequencySweepApex5m (5m)\n` +
                           `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
                           `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
                           `🛡️ *18-Bar Swing Low:* $${data.swing_low || data.trigger_level || 'N/A'}\n` +
                           `🔍 *Status:* Active Liquidity Flush / Wick Absorption in progress!\n` +
                           `📦 *Action:* Bot ready to fire entry on reclaim candle.\n` +
-                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
-        } else if (modeType.toUpperCase().includes('IGNITION')) {
-            messageText = `🚀 *TREND IGNITION MODE DETECTED!*\n` +
-                          `────────────────────\n` +
-                          `🤖 *Strategy:* TrendIgnitionElite (15m)\n` +
-                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
-                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
-                          `📈 *EMA 9 / 21 Cross:* Bullish Cross Active\n` +
-                          `📊 *Momentum RSI:* ${data.rsi || '55 - 68 zone'}\n` +
-                          `🔍 *Status:* Macro Uptrend breakout confirmed above EMA 50!\n` +
-                          `📦 *Action:* Bot ready to capture momentum runner move.\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else {
             messageText = `🎯 *STRATEGY RADAR ALERT*\n` +
@@ -2182,6 +2202,18 @@ app.post('/preemption-alert', async (req, res) => {
                           `🪙 *Released From:* [${relStrat}] (${data.released_from_pair || 'Scalp'})\n` +
                           `🚀 *Assigned To:* [${inStrat}] (*${data.incoming_pair}*)\n` +
                           `💰 *Wallet Status:* Free / Full Stake Handshake Complete\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (data.event === 'PREEMPTION_REJECTED') {
+            const inStrat = data.incoming_strategy || 'High-Priority';
+            const curStrat = data.active_strategy || 'Active Position';
+            const pnlStr = data.current_profit !== undefined ? `${(data.current_profit * 100).toFixed(2)}%` : 'in drawdown';
+            messageText = `🛡️ *PREEMPTION BLOCKED (SOFT FLOOR ACTIVE)*\n` +
+                          `────────────────────\n` +
+                          `🪙 *Active Position:* *${data.pair || 'Active Slot'}* [${curStrat}]\n` +
+                          `📉 *Current Floating PnL:* *${pnlStr}* (Floor: -0.50%)\n` +
+                          `🎯 *Requested By:* *${data.incoming_pair || 'Signal'}* [${inStrat}]\n` +
+                          `🛡️ *Decision:* Position held to protect capital from premature cut!\n` +
+                          `💡 *Safety:* Trade allowed to play out toward bounce/ROI.\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else {
             messageText = `⚡ *PREEMPTION UPDATE*\n────────────────────\n${JSON.stringify(data, null, 2)}`;
@@ -2323,20 +2355,24 @@ async function checkStrategyModes() {
                 }
             }
 
-            // 2. Full Trade Opportunity Check for TrendIgnitionElite (15m)
+            // 2. Full Trade Opportunity Check for LiquiditySweepPro15m (15m)
             const klines15m = await fetchHttpsJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=65`);
             if (Array.isArray(klines15m) && klines15m.length >= 55) {
                 const closes = klines15m.map(k => parseFloat(k[4]));
                 const lastClose = closes[closes.length - 1];
-                const prevClose = closes[closes.length - 2];
                 const lastOpen = parseFloat(klines15m[klines15m.length - 1][1]);
+                const lastLow = parseFloat(klines15m[klines15m.length - 1][3]);
                 const lastVolume = parseFloat(klines15m[klines15m.length - 1][5]);
 
                 // Volume 20 SMA
                 const volumes20 = klines15m.slice(-21, -1).map(k => parseFloat(k[5]));
                 const volumeSma20 = volumes20.reduce((a, b) => a + b, 0) / volumes20.length;
 
-                // Approximate fast EMA 9, EMA 21, EMA 50
+                // 24-bar (6-hour) rolling swing low from previous bars
+                const prev24Lows = klines15m.slice(-25, -1).map(k => parseFloat(k[3]));
+                const swingLow24 = Math.min(...prev24Lows);
+
+                // Approximate EMA 50
                 const ema = (period, arr) => {
                     const k = 2 / (period + 1);
                     let val = arr.slice(0, period).reduce((a, b) => a + b, 0) / period;
@@ -2345,47 +2381,39 @@ async function checkStrategyModes() {
                     }
                     return val;
                 };
-
-                const ema9Now = ema(9, closes);
-                const ema21Now = ema(21, closes);
                 const ema50Now = ema(50, closes);
 
-                const ema9Prev = ema(9, closes.slice(0, -1));
-                const ema21Prev = ema(21, closes.slice(0, -1));
-
-                // EMA 50 Slope across 4 bars
-                const ema50Prev4 = ema(50, closes.slice(0, -4));
-                const ema50Slope = ((ema50Now - ema50Prev4) / ema50Prev4) * 100;
-
                 const rsi15m = calculateRSI(closes, 14);
-                const lastLow = parseFloat(klines15m[klines15m.length - 1][3]);
 
-                // TrendIgnitionSimplePullback Execution Rules:
-                // 1. Bullish moving average alignment: EMA 9 > EMA 21
-                // 2. Macro trend alignment: Close > EMA 50
-                // 3. Slope confirmation: EMA 50 Slope >= 0.015%
-                // 4. Dip touch: Low touches/dips near EMA 9 (<= EMA 9 * 1.002)
-                // 5. Rebound confirmation: Close holds above EMA 9 * 0.998 and Green candle (Close > Open)
-                // 6. RSI sweet spot: 46 - 63
-                // 7. Volume participation: Volume > 20-SMA * 0.75
-                const isPullbackDipOpp = (
-                    (ema9Now > ema21Now) &&
-                    (lastClose > ema50Now) &&
-                    (ema50Slope >= 0.015) &&
-                    (lastLow <= ema9Now * 1.002) &&
-                    (lastClose >= ema9Now * 0.998) &&
+                // Candlestick anatomy: Lower wick vs body
+                const body = Math.abs(lastClose - lastOpen);
+                const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
+
+                // LiquiditySweepPro15m Execution Rules:
+                // 1. 6-Hour Structural Swing Low Sweep: Low dips below 24-candle low
+                // 2. Instantaneous Buyer Reclaim: Close reclaims back above 24-candle low
+                // 3. Bullish Green Close: Close > Open
+                // 4. Institutional Wick Absorption: Lower wick >= 75% of candle body
+                // 5. Trend buffer: Close > EMA 50 * 0.975
+                // 6. Deep Value Oversold RSI: RSI between 24 and 38
+                // 7. Institutional Volume Surge: Volume > 20-SMA * 1.1
+                const isSweepProOpp = (
+                    (lastLow < swingLow24) &&
+                    (lastClose > swingLow24) &&
                     (lastClose > lastOpen) &&
-                    (rsi15m >= 46 && rsi15m <= 63) &&
-                    (lastVolume > (volumeSma20 * 0.75))
+                    (lowerWick >= body * 0.75) &&
+                    (lastClose > ema50Now * 0.975) &&
+                    (rsi15m >= 24 && rsi15m <= 38) &&
+                    (lastVolume > (volumeSma20 * 1.1))
                 );
 
-                const ignitionKey = `IGNITION_PULLBACK_${pair}`;
-                const lastIgnitionTime = lastModeAlertTimes[ignitionKey] || 0;
+                const sweepProKey = `SWEEP_PRO_${pair}`;
+                const lastSweepProTime = lastModeAlertTimes[sweepProKey] || 0;
 
-                if (isPullbackDipOpp && (now - lastIgnitionTime > 30 * 60 * 1000)) {
-                    lastModeAlertTimes[ignitionKey] = now;
+                if (isSweepProOpp && (now - lastSweepProTime > 30 * 60 * 1000)) {
+                    lastModeAlertTimes[sweepProKey] = now;
 
-                    // Query Bot 2 (Trend Ignition Simple Pullback) open trades to verify wallet availability
+                    // Query Bot 2 (Liquidity Sweep Pro 15m) open trades to verify wallet availability
                     let isWalletFree = true;
                     let openTradesCount = 0;
                     try {
@@ -2403,25 +2431,25 @@ async function checkStrategyModes() {
                         : `⚠️ *Wallet Status:* Slot Busy (${openTradesCount} Active Trade)`;
 
                     const actionText = isWalletFree
-                        ? `🎯 Pullback Dip entry signal triggered & active!`
+                        ? `🎯 Macro Swing Reclaim triggered & ready for execution!`
                         : `⚠️ Signal live, but wallet slot currently occupied.`;
 
-                    const ignMsg = `🚀 *TREND IGNITION PULLBACK SIGNAL!*\n` +
+                    const proMsg = `🌊 *MACRO LIQUIDITY SWEEP RECLAIM SIGNAL!*\n` +
                                    `────────────────────\n` +
-                                   `🤖 *Strategy:* TrendIgnitionSimplePullback (15m)\n` +
+                                   `🤖 *Strategy:* LiquiditySweepPro15m (15m)\n` +
                                    `🪙 *Pair:* *${pair}*\n` +
                                    `📍 *Signal Price:* $${lastClose}\n` +
-                                   `📉 *Dip Retest:* Low reached $${lastLow.toFixed(4)} near EMA 9 ($${ema9Now.toFixed(4)})\n` +
-                                   `📈 *Trend Structure:* EMA 9 ($${ema9Now.toFixed(4)}) > EMA 21 ($${ema21Now.toFixed(4)})\n` +
-                                   `🛡️ *Macro EMA 50:* $${ema50Now.toFixed(4)} (Slope: +${ema50Slope.toFixed(3)}%)\n` +
-                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Pullback zone: 46-63)\n` +
+                                   `🛡️ *24-Bar (6h) Swing Low:* $${swingLow24.toFixed(4)}\n` +
+                                   `📉 *Sweep Flush:* Dipped to $${lastLow.toFixed(4)} & Reclaimed!\n` +
+                                   `🕯️ *Rejection Wick:* ${(lowerWick / (body || 0.0001)).toFixed(1)}x candle body\n` +
+                                   `📊 *RSI (14):* ${rsi15m.toFixed(1)} (Deep Value: 24-38)\n` +
                                    `🔥 *Volume:* ${(lastVolume / (volumeSma20 || 1)).toFixed(2)}x of 20-SMA\n` +
                                    `${walletBadge}\n` +
                                    `📦 *Status:* ${actionText}\n` +
                                    `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
-                    await sendWhatsAppSafe(TARGET_JID, { text: ignMsg });
-                    console.log(`Automated Trend Ignition Pullback alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
+                    await sendWhatsAppSafe(TARGET_JID, { text: proMsg });
+                    console.log(`Automated Liquidity Sweep Pro alert sent for ${pair} (Wallet Free: ${isWalletFree})`);
                 }
             }
 

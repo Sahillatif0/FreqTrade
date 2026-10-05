@@ -99,13 +99,6 @@ class HighFrequencySweepApex5m(IStrategy):
         dataframe.loc[:, "enter_long"] = 0
         dataframe.loc[:, "enter_tag"] = ""
 
-        # Top Alpha Rotation Set
-        #allowed_pairs = [
-        #    "TAO/USDT", "SUI/USDT", "INJ/USDT"
-        #]
-        #if metadata.get("pair") not in allowed_pairs:
-        #    return dataframe
-
         sweep_entry = (
             (dataframe["low"] < dataframe["range_low_18"]) &
             (dataframe["close"] > dataframe["range_low_18"]) &
@@ -135,15 +128,20 @@ class HighFrequencySweepApex5m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        """Preempts if higher priority strategy (TTM=3 or TIE=2) requested balance"""
+        """Preempts if higher priority strategy (TTM=3) requested balance, protected by Soft Floor (-0.50%)"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 1:
-                        logger.info(f"[HighFrequencySweepApex5m] Preempting for higher priority: {pending.get('strategy')}")
-                        return "preempted_for_high_priority"
+                    if pending.get("priority", 1) > 1:  # Apex is Priority 1, yields to SweepPro (P2) and TTM (P3)
+                        # Soft floor rule: Only preempt if profit is >= -0.50%
+                        if current_profit >= -0.005:
+                            logger.info(f"[HighFrequencySweepApex5m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
+                            return "preempted_for_high_priority"
+                        else:
+                            pc.reject_preemption("HighFrequencySweepApex5m", pair, current_profit)
+                            logger.info(f"[HighFrequencySweepApex5m] Preemption blocked by Soft Floor: current profit {current_profit:.2%} < -0.50%")
             except Exception as e:
                 logger.warning(f"[HighFrequencySweepApex5m] Coordinator check error: {e}")
         return None

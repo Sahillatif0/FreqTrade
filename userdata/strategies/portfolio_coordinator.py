@@ -11,9 +11,17 @@ STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
     "TTMSqueezeBreakoutElite": 3,
-    "TrendIgnitionSimplePullback": 2,
-    "TrendIgnitionElite": 2,
-    "HighFrequencySweepApex5m": 1
+    "LiquiditySweepPro15m": 2,
+    "HighFrequencySweepApex5m": 1,
+    # Common Aliases & Fallbacks
+    "TTM": 3,
+    "TTMSqueeze": 3,
+    "LiquiditySweepPro": 2,
+    "SweepPro": 2,
+    "Apex": 1,
+    "HighFrequencySweepApex": 1,
+    "TrendIgnitionSimplePullback": 1,
+    "TrendIgnitionElite": 1
 }
 
 def get_state() -> dict:
@@ -141,6 +149,46 @@ def release_balance() -> None:
         "incoming_pair": incoming_pair
     })
 
+SOFT_FLOOR_THRESHOLD = -0.005  # -0.50% max negative drawdown allowed for preemption
+
+def reject_preemption(active_strategy: str, pair: str, current_profit: float) -> None:
+    """Invoked when an active lower-priority trade cannot yield balance due to Soft Floor (-0.50%) protection"""
+    state = get_state()
+    pending = state.get("pending_intent")
+    if not pending or pending.get("status") != "WAITING_FOR_BALANCE":
+        return
+
+    incoming_strat = pending.get("strategy")
+    incoming_pair = pending.get("pair")
+    
+    pending["status"] = "REJECTED_SOFT_FLOOR"
+    pending["rejected_at"] = time.time()
+    pending["current_profit"] = current_profit
+    set_state(state)
+    logger.info(f"[Coordinator] Preemption by {incoming_strat} rejected by soft floor on {active_strategy} ({pair} at {current_profit:.2%})")
+
+    notify_whatsapp("PREEMPTION_REJECTED", {
+        "active_strategy": active_strategy,
+        "pair": pair,
+        "current_profit": current_profit,
+        "incoming_strategy": incoming_strat,
+        "incoming_pair": incoming_pair
+    })
+
+def can_enter(strategy_name: str, pair: str = None) -> bool:
+    """Returns True if the strategy is allowed to enter (slot is IDLE or already claimed by this strategy)"""
+    state = get_state()
+    active_strat = state.get("active_strategy")
+    if not active_strat or active_strat == strategy_name:
+        return True
+    
+    # Auto-recover if state has been idle or untouched for > 30 hours
+    if time.time() - state.get("last_update", 0) > 108000:
+        logger.warning(f"[Coordinator] State expired. Allowing entry for {strategy_name}.")
+        return True
+        
+    return False
+
 def confirm_entry(strategy_name: str, pair: str) -> None:
     state = get_state()
     state["active_strategy"] = strategy_name
@@ -153,9 +201,14 @@ def confirm_entry(strategy_name: str, pair: str) -> None:
 def confirm_exit(strategy_name: str, pair: str) -> None:
     state = get_state()
     if state.get("active_strategy") == strategy_name:
-        state["active_strategy"] = None
-        state["active_pair"] = None
-        state["status"] = "IDLE"
-        set_state(state)
-        logger.info(f"[Coordinator] Exit confirmed for {strategy_name} ({pair}). State set to IDLE.")
+        pending = state.get("pending_intent")
+        if pending and pending.get("status") == "WAITING_FOR_BALANCE":
+            release_balance()
+        else:
+            state["active_strategy"] = None
+            state["active_pair"] = None
+            state["status"] = "IDLE"
+            set_state(state)
+            logger.info(f"[Coordinator] Exit confirmed for {strategy_name} ({pair}). State set to IDLE.")
+
 
