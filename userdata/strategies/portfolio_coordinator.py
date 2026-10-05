@@ -10,16 +10,23 @@ USERDATA_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 STATE_FILE = os.path.join(USERDATA_DIR, "portfolio_state.json")
 
 PRIORITY = {
-    "TTMSqueezeBreakoutElite": 3,
-    "LiquiditySweepPro15m": 2,
-    "HighFrequencySweepApex5m": 1,
+    "TTMSqueezeBreakoutElite": 4,
+    "FVGReclaimFiller15m": 3,
+    "HighFrequencySweepApex5m": 2,
+    "LiquiditySweepPro15m": 1,
     # Common Aliases & Fallbacks
-    "TTM": 3,
-    "TTMSqueeze": 3,
-    "LiquiditySweepPro": 2,
-    "SweepPro": 2,
-    "Apex": 1,
-    "HighFrequencySweepApex": 1,
+    "TTM": 4,
+    "TTMSqueeze": 4,
+    "FVGReclaimFiller": 3,
+    "FVGReclaim": 3,
+    "FVG": 3,
+    "Apex": 2,
+    "HighFrequencySweepApex": 2,
+    "LiquiditySweepPro": 1,
+    "SweepPro": 1,
+    "CapitalVelocityFiller5m": 0,
+    "CapitalVelocityFiller": 0,
+    "Filler": 0,
     "TrendIgnitionSimplePullback": 1,
     "TrendIgnitionElite": 1
 }

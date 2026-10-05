@@ -99,13 +99,23 @@ const FT_BOTS = {
         port: 8082,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
+    }),
+    bot4: loadBotConfig(['config_fvg.json', 'config_bot4_fvg.json', 'config_filler.json'], {
+        id: 4,
+        name: 'FVG Reclaim Filler 15m',
+        tag: '📐 FVG RECLAIM 15M',
+        host: '127.0.0.1',
+        port: 8083,
+        username: 'freqtrader',
+        password: process.env.FT_PASSWORD || '724455'
     })
 };
 
 console.log('[Bridge Config] Loaded bot ports:', {
     bot1: `${FT_BOTS.bot1.host}:${FT_BOTS.bot1.port} (${FT_BOTS.bot1.username})`,
     bot2: `${FT_BOTS.bot2.host}:${FT_BOTS.bot2.port} (${FT_BOTS.bot2.username})`,
-    bot3: `${FT_BOTS.bot3.host}:${FT_BOTS.bot3.port} (${FT_BOTS.bot3.username})`
+    bot3: `${FT_BOTS.bot3.host}:${FT_BOTS.bot3.port} (${FT_BOTS.bot3.username})`,
+    bot4: `${FT_BOTS.bot4.host}:${FT_BOTS.bot4.port} (${FT_BOTS.bot4.username})`
 });
 
 const FT_API_HOST = FT_BOTS.bot1.host;
@@ -195,6 +205,11 @@ const STRATEGY_ROI_TABLES = {
         { min: 60,  roi: 0.018 },
         { min: 30,  roi: 0.024 },
         { min: 0,   roi: 0.035 }
+    ],
+    bot4: [ // FVGReclaimFiller15m (15m): {"0": 0.030, "240": 0.018, "480": 0.008}
+        { min: 480, roi: 0.008 },
+        { min: 240, roi: 0.018 },
+        { min: 0,   roi: 0.030 }
     ]
 };
 
@@ -362,19 +377,21 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1'
     });
 }
 
-// Generate full daily morning digest across all 3 bots
+// Generate full daily morning digest across all 4 bots
 async function generateDailyDigest() {
     try {
-        const [p1, p2, p3, balance, s1, s2, s3, fng, btcTicker] = await Promise.all([
+        const [p1, p2, p3, p4, balance, s1, s2, s3, s4, fng, btcTicker] = await Promise.all([
             callFreqtradeApi('/profit', 'GET', null, 'bot1').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot2').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot3').catch(() => ({})),
+            callFreqtradeApi('/profit', 'GET', null, 'bot4').catch(() => ({})),
             callFreqtradeApi('/balance', 'GET', null, 'bot1').catch(async () => {
                 return await callFreqtradeApi('/balance', 'GET', null, 'bot2').catch(() => ({}));
             }),
             callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => ([])),
             callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => ([])),
             callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => ([])),
+            callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => ([])),
             fetchHttpsJson('https://api.alternative.me/fng/?limit=1').catch(() => null),
             fetchHttpsJson('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT').catch(() => null)
         ]);
@@ -385,29 +402,32 @@ async function generateDailyDigest() {
         const totalProfitUSDT = (
             (p1.profit_closed_coin || 0) +
             (p2.profit_closed_coin || 0) +
-            (p3.profit_closed_coin || 0)
+            (p3.profit_closed_coin || 0) +
+            (p4.profit_closed_coin || 0)
         ).toFixed(2);
 
-        const totalWins = (p1.winning_trades || 0) + (p2.winning_trades || 0) + (p3.winning_trades || 0);
-        const totalLosses = (p1.losing_trades || 0) + (p2.losing_trades || 0) + (p3.losing_trades || 0);
+        const totalWins = (p1.winning_trades || 0) + (p2.winning_trades || 0) + (p3.winning_trades || 0) + (p4.winning_trades || 0);
+        const totalLosses = (p1.losing_trades || 0) + (p2.losing_trades || 0) + (p3.losing_trades || 0) + (p4.losing_trades || 0);
         const totalClosed = totalWins + totalLosses;
         const winRate = totalClosed > 0 ? ((totalWins / totalClosed) * 100).toFixed(1) : '100.0';
 
         const openCount = (Array.isArray(s1) ? s1.length : 0) +
                           (Array.isArray(s2) ? s2.length : 0) +
-                          (Array.isArray(s3) ? s3.length : 0);
+                          (Array.isArray(s3) ? s3.length : 0) +
+                          (Array.isArray(s4) ? s4.length : 0);
 
         const fngVal = fng?.data?.[0]?.value || 'N/A';
         const fngClass = fng?.data?.[0]?.value_classification || 'Neutral';
         const btcPrice = btcTicker?.lastPrice ? parseFloat(btcTicker.lastPrice).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
         const btcChange = btcTicker?.priceChangePercent ? parseFloat(btcTicker.priceChangePercent).toFixed(2) : '0.00';
 
-        return `🌅 *DAILY TRADING DIGEST (3-BOT PORTFOLIO)*\n` +
+        return `🌅 *DAILY TRADING DIGEST (4-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
                `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
-               `   • Sweep Pro (P2): ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Apex Sweep (P1): ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • TTM Squeeze (P3): ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • TTM Squeeze (P4): ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • FVG Reclaim (P3): ${(p4.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Apex Sweep (P2): ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Sweep Pro (P1): ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
                `📊 *Active Trades:* ${openCount} open\n` +
@@ -415,7 +435,7 @@ async function generateDailyDigest() {
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_TTM Squeeze (P3), Sweep Pro (P2) & Apex Sweep (P1) active!_ 🚀`;
+               `_TTM (P4) > FVG (P3) > Apex (P2) > Sweep Pro (P1) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -499,16 +519,18 @@ async function checkTradeMilestones() {
     if (!TARGET_JID || !sock || !isConnected) return;
 
     try {
-        const [open1, open2, open3] = await Promise.all([
+        const [open1, open2, open3, open4] = await Promise.all([
             callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
             callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
-            callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
+            callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => []),
+            callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => [])
         ]);
 
         const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
         const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
         const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
-        const openTrades = [...tagged1, ...tagged2, ...tagged3];
+        const tagged4 = (Array.isArray(open4) ? open4 : []).map(t => ({ ...t, botKey: 'bot4', botTag: FT_BOTS.bot4.tag }));
+        const openTrades = [...tagged1, ...tagged2, ...tagged3, ...tagged4];
 
         if (openTrades.length === 0) return;
 
@@ -671,14 +693,14 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
     try {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
-            return `🤖 *TRI-BOT COMMAND CENTER (3-BOT PORTFOLIO)*\n` +
+            return `🤖 *QUAD-BOT COMMAND CENTER (4-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
-                    `📊 */status* - Active open trades across all 3 bots\n` +
-                   `   • */status 1* (Apex Sweep) | */status 2* (Sweep Pro) | */status 3* (TTM Squeeze)\n` +
+                    `📊 */status* - Active open trades across all 4 bots\n` +
+                   `   • */status 1* (Apex) | */status 2* (Sweep Pro) | */status 3* (TTM) | */status 4* (FVG)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
-                   `   • */trades 1*, */trades 2* or */trades 3* to filter by bot\n` +
-                   `💰 */profit* - Cumulative profit summary across all 3 bots\n` +
-                   `   • */profit 1* | */profit 2* | */profit 3* for single bot breakdown\n` +
+                   `   • Filter with */trades 1*, */trades 2*, */trades 3*, or */trades 4*\n` +
+                   `💰 */profit* - Cumulative profit summary across all 4 bots\n` +
+                   `   • */profit 1* | */profit 2* | */profit 3* | */profit 4* for single bot\n` +
                    `⚖️ */balance* - Shared Binance wallet balance & PKR equity\n` +
                    `🎯 */opportunities* - Live radar across whitelist pairs\n` +
                    `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert\n` +
@@ -686,19 +708,19 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🗑️ */clearalerts* - Clear active custom price alerts\n` +
                    `ℹ️ */info* - Live prices, support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
-                   `🛡️ */stoploss [1/2/3] [id] [pct/price]* - Update stop loss for a trade\n` +
-                   `🎯 */takeprofit [1/2/3] [id] [pct/price]* - Set custom take profit target\n` +
-                   `🚨 */forcesell [1/2/3/all] [id]* - Instantly market exit trades\n` +
+                   `🛡️ */stoploss [1/2/3/4] [id] [pct/price]* - Update stop loss for a trade\n` +
+                   `🎯 */takeprofit [1/2/3/4] [id] [pct/price]* - Set custom take profit target\n` +
+                   `🚨 */forcesell [1/2/3/4/all] [id]* - Instantly market exit trades\n` +
                    `📈 */performance* - Performance per trading pair\n` +
-                   `⏱️ */daily* - Daily profit breakdown\n` +
+                   `⏱️ */daily* - Daily profit breakdown across all 4 bots\n` +
                    `🌅 */digest* - Generate full morning digest\n` +
-                   `🔄 */reload [1/2/3/all]* - Reload bot configs\n` +
-                   `⏸️ */stop [1/2/3/all]* - Pause trading (stop buying)\n` +
-                   `▶️ */start [1/2/3/all]* - Resume trading\n` +
-                   `🛡️ */protection [1/2/3]* - Circuit breaker & stoploss lockout status\n` +
+                   `🔄 */reload [1/2/3/4/all]* - Reload bot configs\n` +
+                   `⏸️ */stop [1/2/3/4/all]* - Pause trading (stop buying)\n` +
+                   `▶️ */start [1/2/3/4/all]* - Resume trading\n` +
+                   `🛡️ */protection [1/2/3/4]* - Circuit breaker & stoploss lockout status\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Tip: Automated Preemption ensures TTM (P3) & Sweep Pro (P2) get priority over Apex (P1)!_`;
+                   `_Priority Order: TTM (P4) > FVG (P3) > Apex (P2) > Sweep Pro (P1)_ 🛡️`;
         }
 
 
@@ -706,10 +728,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -726,7 +749,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const hasErrors = results.some(r => r.error !== null);
 
             if (allTradesCount === 0) {
-                let msg = `📊 *PORTFOLIO STATUS (3 BOTS)*\n────────────────────\n`;
+                let msg = `📊 *PORTFOLIO STATUS (4 BOTS)*\n────────────────────\n`;
                 if (hasErrors) {
                     msg += `⚠️ *Some bots could not be reached:*\n`;
                     results.forEach(({ bot, error }) => {
@@ -739,10 +762,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     msg += `\n_Check if bots are running or verify passwords in configs._`;
                 } else {
                     msg += `🟢 No active open trades right now.\n` +
-                           `All 3 bots are scanning for high-probability setups! 🔍\n\n` +
-                           `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 3 - Master)\n` +
-                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2)\n` +
-                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1)`;
+                           `All 4 bots are scanning for high-probability setups! 🔍\n\n` +
+                           `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 4 - Master)\n` +
+                           `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 3 - Imbalance Engine)\n` +
+                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 2)\n` +
+                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 1)`;
                 }
                 return msg.trim();
             }
@@ -861,21 +885,24 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
                 else if (p === '3' || p === 'ttm' || p === 'squeeze' || p === 'compound') targetBot = 'bot3';
+                else if (p === '4' || p === 'fvg' || p === 'filler' || p === 'reclaim') targetBot = 'bot4';
                 else if (!isNaN(parseInt(p))) limit = parseInt(p);
             }
 
             try {
                 let trades = [];
                 if (targetBot === 'all') {
-                    const [t1, t2, t3] = await Promise.all([
+                    const [t1, t2, t3, t4] = await Promise.all([
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot3').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot3').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot4').catch(() => ({ trades: [] }))
                     ]);
                     const list1 = (t1.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot1.tag }));
                     const list2 = (t2.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot2.tag }));
                     const list3 = (t3.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot3.tag }));
-                    trades = [...list1, ...list2, ...list3].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
+                    const list4 = (t4.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot4.tag }));
+                    trades = [...list1, ...list2, ...list3, ...list4].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
                 } else {
                     const tData = await callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, targetBot).catch(() => ({ trades: [] }));
                     const bObj = FT_BOTS[targetBot];
@@ -987,10 +1014,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -1042,7 +1070,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             const overallWR = totTrades > 0 ? ((totWins / totTrades) * 100).toFixed(1) : '0.0';
 
-            return `💰 *CUMULATIVE TRI-BOT PORTFOLIO PROFIT*\n` +
+            return `💰 *CUMULATIVE QUAD-BOT PORTFOLIO PROFIT*\n` +
                    `────────────────────\n` +
                    `💵 *Combined Net Profit:* *${totClosedProfit >= 0 ? '+' : ''}${totClosedProfit.toFixed(2)} USDT*\n` +
                    `📊 *Total Closed Trades:* ${totTrades}\n` +
@@ -1051,14 +1079,14 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `*Individual Bot Breakdown:*\n` +
                    breakdownText +
                    `────────────────────\n` +
-                   `_Tip: Query individually with "/profit 1", "/profit 2" or "/profit 3"_`;
+                   `_Tip: Query individually with "/profit 1", "/profit 2", "/profit 3" or "/profit 4"_`;
         }
 
 
         if (cmd === '/balance' || cmd === 'balance') {
             let data = null;
             let activeBotName = '';
-            for (const bKey of ['bot1', 'bot2', 'bot3']) {
+            for (const bKey of ['bot1', 'bot2', 'bot3', 'bot4']) {
                 try {
                     data = await callFreqtradeApi('/balance', 'GET', null, bKey);
                     if (data && data.currencies) {
@@ -1095,10 +1123,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
-            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
+            if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
 
             try {
                 const results = await Promise.all(
@@ -1148,17 +1177,19 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
                 else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
                 else if (p === '3' || p === 'ttm' || p === 'squeeze' || p === 'compound') targetBot = 'bot3';
+                else if (p === '4' || p === 'fvg' || p === 'filler' || p === 'reclaim') targetBot = 'bot4';
                 else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
 
             try {
-                // Fetch recent closed trades from all 3 bots to accurately compute exact daily PnL
+                // Fetch recent closed trades from all 4 bots to accurately compute exact daily PnL
                 let tradesPromises = [];
                 if (targetBot === 'all') {
                     tradesPromises = [
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot3').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot3').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot4').catch(() => ({ trades: [] }))
                     ];
                 } else {
                     tradesPromises = [
@@ -1205,7 +1236,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 let totalPeriodProfit = 0;
                 let totalPeriodTrades = 0;
-                let botHeader = targetBot === 'all' ? 'TRI-BOT PORTFOLIO' : (FT_BOTS[targetBot]?.name || targetBot.toUpperCase());
+                let botHeader = targetBot === 'all' ? 'QUAD-BOT PORTFOLIO' : (FT_BOTS[targetBot]?.name || targetBot.toUpperCase());
                 let msg = `⏱️ *DAILY PROFIT BREAKDOWN (${botHeader})*\n────────────────────\n`;
 
                 sortedDates.forEach(date => {
@@ -1219,7 +1250,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                 msg += `────────────────────\n` +
                        `💰 *Total (${sortedDates.length} Days):* *${totalPeriodProfit >= 0 ? '+' : ''}${totalPeriodProfit.toFixed(2)} USDT* (${totalPeriodTrades} trades)\n` +
-                       `_Tip: Query specific days or bot, e.g. "/daily 3", "/daily 1", "/daily 2", "/daily 3 14"_`;
+                       `_Tip: Query specific days or bot, e.g. "/daily 3", "/daily 4", "/daily 1", "/daily 2", "/daily 4 14"_`;
 
                 return msg.trim();
             } catch (err) {
@@ -1233,19 +1264,23 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot1');
                 return `⏸️ *[${FT_BOTS.bot1.tag}] Paused*\nNew trade entries paused on High Frequency Sweep Apex.`;
-            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') {
+            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot2');
                 return `⏸️ *[${FT_BOTS.bot2.tag}] Paused*\nNew trade entries paused on Liquidity Sweep Pro 15m.`;
             } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                 await callFreqtradeApi('/stop', 'POST', null, 'bot3');
                 return `⏸️ *[${FT_BOTS.bot3.tag}] Paused*\nNew trade entries paused on TTM Squeeze Breakout Elite.`;
+            } else if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') {
+                await callFreqtradeApi('/stop', 'POST', null, 'bot4');
+                return `⏸️ *[${FT_BOTS.bot4.tag}] Paused*\nNew trade entries paused on FVG Reclaim Filler 15m.`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/stop', 'POST', null, 'bot1').catch(() => null),
                     callFreqtradeApi('/stop', 'POST', null, 'bot2').catch(() => null),
-                    callFreqtradeApi('/stop', 'POST', null, 'bot3').catch(() => null)
+                    callFreqtradeApi('/stop', 'POST', null, 'bot3').catch(() => null),
+                    callFreqtradeApi('/stop', 'POST', null, 'bot4').catch(() => null)
                 ]);
-                return `⏸️ *All 3 Bots Paused*\nNew trade entries stopped across all 3 bots. Open trades still monitored for exit.`;
+                return `⏸️ *All 4 Bots Paused*\nNew trade entries stopped across all 4 bots. Open trades still monitored for exit.`;
             }
         }
 
@@ -1255,19 +1290,23 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot1');
                 return `▶️ *[${FT_BOTS.bot1.tag}] Resumed*\nScanning for 5m Apex liquidity sweeps!`;
-            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') {
+            } else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot2');
                 return `▶️ *[${FT_BOTS.bot2.tag}] Resumed*\nScanning for 15m macro liquidity sweep reclaims!`;
             } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                 await callFreqtradeApi('/start', 'POST', null, 'bot3');
                 return `▶️ *[${FT_BOTS.bot3.tag}] Resumed*\nScanning for 15m TTM squeeze breakouts!`;
+            } else if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') {
+                await callFreqtradeApi('/start', 'POST', null, 'bot4');
+                return `▶️ *[${FT_BOTS.bot4.tag}] Resumed*\nScanning for 15m FVG imbalance reclaims!`;
             } else {
                 await Promise.all([
                     callFreqtradeApi('/start', 'POST', null, 'bot1').catch(() => null),
                     callFreqtradeApi('/start', 'POST', null, 'bot2').catch(() => null),
-                    callFreqtradeApi('/start', 'POST', null, 'bot3').catch(() => null)
+                    callFreqtradeApi('/start', 'POST', null, 'bot3').catch(() => null),
+                    callFreqtradeApi('/start', 'POST', null, 'bot4').catch(() => null)
                 ]);
-                return `▶️ *All 3 Bots Resumed*\nAll 3 strategies scanning pairs for entry signals!`;
+                return `▶️ *All 4 Bots Resumed*\nAll 4 strategies scanning pairs for entry signals!`;
             }
         }
 
@@ -1359,7 +1398,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             try {
                 if (targetArg === 'all') {
                     let results = [];
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades)) {
                             for (const trade of openTrades) {
@@ -1370,8 +1409,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     }
                     if (results.length === 0) return `⚠️ No active open trades to sell on any bot.`;
                     return results.join('\n');
-                } else if (targetArg === '1' || targetArg === '2' || targetArg === '3' || targetArg === 'compound') {
-                    const b = targetArg === '1' ? FT_BOTS.bot1 : (targetArg === '2' ? FT_BOTS.bot2 : FT_BOTS.bot3);
+                } else if (targetArg === '1' || targetArg === '2' || targetArg === '3' || targetArg === '4' || targetArg === 'fvg') {
+                    const b = targetArg === '1' ? FT_BOTS.bot1 : (targetArg === '2' ? FT_BOTS.bot2 : (targetArg === '3' ? FT_BOTS.bot3 : FT_BOTS.bot4));
                     if (specificTradeId) {
                         await callFreqtradeApi('/forcesell', 'POST', { tradeid: String(specificTradeId) }, b);
                         return `🚨 [${b.tag}] Force exit sent for trade #${specificTradeId} at market price!`;
@@ -1388,7 +1427,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else {
                     const tradeId = targetArg;
                     let found = false;
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades) && openTrades.some(t => String(t.trade_id) === String(tradeId))) {
 
@@ -1425,17 +1464,19 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const actionArg = parts[2].trim().toLowerCase();
 
             try {
-                // Check if tradeId is valid in open trades across all 3 bots
-                const [open1, open2, open3] = await Promise.all([
+                // Check if tradeId is valid in open trades across all 4 bots
+                const [open1, open2, open3, open4] = await Promise.all([
                     callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
                     callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
-                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
+                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => [])
                 ]);
 
                 const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
                 const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
                 const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
-                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3];
+                const tagged4 = (Array.isArray(open4) ? open4 : []).map(t => ({ ...t, botKey: 'bot4', botTag: FT_BOTS.bot4.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3, ...tagged4];
 
                 let targetTrade = allOpenTrades.find(t => 
                     String(t.trade_id) === String(tradeId) || 
@@ -1538,17 +1579,19 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const actionArg = parts[2].trim().toLowerCase();
 
             try {
-                // Check if tradeId is valid in open trades across all 3 bots
-                const [open1, open2, open3] = await Promise.all([
+                // Check if tradeId is valid in open trades across all 4 bots
+                const [open1, open2, open3, open4] = await Promise.all([
                     callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
                     callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
-                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => [])
+                    callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => []),
+                    callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => [])
                 ]);
 
                 const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
                 const tagged2 = (Array.isArray(open2) ? open2 : []).map(t => ({ ...t, botKey: 'bot2', botTag: FT_BOTS.bot2.tag }));
                 const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
-                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3];
+                const tagged4 = (Array.isArray(open4) ? open4 : []).map(t => ({ ...t, botKey: 'bot4', botTag: FT_BOTS.bot4.tag }));
+                const allOpenTrades = [...tagged1, ...tagged2, ...tagged3, ...tagged4];
 
                 let targetTrade = allOpenTrades.find(t => 
                     String(t.trade_id) === String(tradeId) || 
@@ -1657,13 +1700,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze' || targetArg === 'compound') {
                     await callFreqtradeApi('/reload_config', 'POST', null, 'bot3');
                     return `🔄 *[${FT_BOTS.bot3.tag}] Config & Pairlist Reloaded Successfully!*`;
+                } else if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'reclaim') {
+                    await callFreqtradeApi('/reload_config', 'POST', null, 'bot4');
+                    return `🔄 *[${FT_BOTS.bot4.tag}] Config & Pairlist Reloaded Successfully!*`;
                 } else {
                     await Promise.all([
                         callFreqtradeApi('/reload_config', 'POST', null, 'bot1').catch(() => null),
                         callFreqtradeApi('/reload_config', 'POST', null, 'bot2').catch(() => null),
-                        callFreqtradeApi('/reload_config', 'POST', null, 'bot3').catch(() => null)
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot3').catch(() => null),
+                        callFreqtradeApi('/reload_config', 'POST', null, 'bot4').catch(() => null)
                     ]);
-                    return `🔄 *All 3 Bot Configs Reloaded Successfully!*\nBots updated without restarting.`;
+                    return `🔄 *All 4 Bot Configs Reloaded Successfully!*\nBots updated without restarting.`;
                 }
 
             } catch (err) {
@@ -1774,10 +1821,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd === '/version' || cmd === 'version') {
-            const [v1, v2, v3] = await Promise.all([
+            const [v1, v2, v3, v4] = await Promise.all([
                 callFreqtradeApi('/version', 'GET', null, 'bot1').catch(() => null),
                 callFreqtradeApi('/version', 'GET', null, 'bot2').catch(() => null),
-                callFreqtradeApi('/version', 'GET', null, 'bot3').catch(() => null)
+                callFreqtradeApi('/version', 'GET', null, 'bot3').catch(() => null),
+                callFreqtradeApi('/version', 'GET', null, 'bot4').catch(() => null)
             ]);
 
             // Also read coordinator portfolio state if available
@@ -1799,13 +1847,15 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
             } catch (e) {}
 
-            return `ℹ️ *TRI-BOT SYSTEM STATUS*\n────────────────────\n` +
-                   `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencySweepApex5m (5m Micro-Sweep | Priority 1)\n\n` +
-                   `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: LiquiditySweepPro15m (15m Macro Reclaim | Priority 2)\n\n` +
+            return `ℹ️ *QUAD-BOT SYSTEM STATUS*\n────────────────────\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 3 - Master)\n\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 4 - Master)\n\n` +
+                   `🤖 *Bot 4 (Port ${FT_BOTS.bot4.port}):* ${v4 ? `v${v4.version}` : 'Offline'}\n` +
+                   `   Strategy: FVGReclaimFiller15m (15m FVG Reclaim Filler | Priority 3)\n\n` +
+                   `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
+                   `   Strategy: HighFrequencySweepApex5m (5m Micro-Sweep | Priority 2)\n\n` +
+                   `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
+                   `   Strategy: LiquiditySweepPro15m (15m Macro Reclaim | Priority 1)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -1813,10 +1863,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'squeeze') botsToQuery = [FT_BOTS.bot3];
+            if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -2108,7 +2159,17 @@ app.post('/mode-alert', async (req, res) => {
         const modeType = data.mode || data.type || 'SWEEP'; // 'SWEEP' or 'IGNITION'
         let messageText = '';
 
-        if (modeType.toUpperCase().includes('PRO') || modeType.toUpperCase().includes('LIQUIDITY')) {
+        if (modeType.toUpperCase().includes('FVG') || modeType.toUpperCase().includes('IMBALANCE') || modeType.toUpperCase().includes('RECLAIM')) {
+            messageText = `📐 *FVG RECLAIM DETECTED!*\n` +
+                          `────────────────────\n` +
+                          `🤖 *Strategy:* FVGReclaimFiller15m (15m)\n` +
+                          `🪙 *Pair:* *${data.pair || 'N/A'}*\n` +
+                          `📍 *Current Price:* $${data.current_price || data.price || 'N/A'}\n` +
+                          `🛡️ *FVG Zone:* $${data.fvg_top || data.trigger_level || 'N/A'} - $${data.fvg_bottom || 'N/A'}\n` +
+                          `🔍 *Status:* Fair Value Gap Reclaim & Dynamic Expansion in progress!\n` +
+                          `📦 *Action:* Bot ready to execute on 15m candle close.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (modeType.toUpperCase().includes('PRO') || modeType.toUpperCase().includes('LIQUIDITY')) {
             messageText = `🌊 *MACRO SWEEP RECLAIM DETECTED!*\n` +
                           `────────────────────\n` +
                           `🤖 *Strategy:* LiquiditySweepPro15m (15m)\n` +

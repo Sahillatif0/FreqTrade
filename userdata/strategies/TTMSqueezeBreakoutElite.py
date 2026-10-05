@@ -157,7 +157,7 @@ class TTMSqueezeBreakoutElite(IStrategy):
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 3:  # TTM is Master Priority 3, never preempted by lower priority
+                    if pending.get("priority", 1) > 4:  # TTM is Master Priority 4, never preempted by lower priority
                         logger.info(f"[TTMSqueeze] Preempting for higher priority: {pending.get('strategy')}")
                         return "preempted_for_high_priority"
             except Exception as e:

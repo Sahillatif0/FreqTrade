@@ -140,7 +140,7 @@ class LiquiditySweepPro15m(IStrategy):
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 2:  # Yields only to Master TTM (Priority 3)
+                    if pending.get("priority", 1) > 1:  # Yields to Apex (P2), FVG (P3), and TTM (P4)
                         # Soft floor rule: Only preempt if profit is >= -0.50%
                         if current_profit >= -0.005:
                             logger.info(f"[LiquiditySweepPro15m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
