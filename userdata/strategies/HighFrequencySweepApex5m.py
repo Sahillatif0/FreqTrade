@@ -34,11 +34,12 @@ class HighFrequencySweepApex5m(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.0220,    # Cap runner target at +2.20%
-        "180": 0.008    # Breakeven after 3 hours
+        "0": 0.028,
+        "180": 0.012,
+        "360": 0.006
     }
 
-    stoploss = -0.016
+    stoploss = -0.025
     trailing_stop = False
     use_custom_stoploss = False
 

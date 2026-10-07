@@ -187,29 +187,75 @@ function saveCustomStopLosses() {
     }
 }
 
+const STRATEGY_DEFAULTS = {
+    bot1: {
+        name: 'HighFrequencySweepApex5m',
+        slRatio: 0.975,
+        slPct: '-2.5%',
+        slValue: -0.025,
+        trailingStop: false,
+        trailingOffsetPct: null,
+        trailingPct: null,
+        initialTpRatio: 1.028,
+        initialTpPct: '+2.8%'
+    },
+    bot2: {
+        name: 'LiquiditySweepPro15m',
+        slRatio: 0.980,
+        slPct: '-2.0%',
+        slValue: -0.020,
+        trailingStop: true,
+        trailingOffsetPct: '+2.4%',
+        trailingPct: '+1.0%',
+        initialTpRatio: 1.034,
+        initialTpPct: '+3.4%'
+    },
+    bot3: {
+        name: 'TTMSqueezeBreakoutElite',
+        slRatio: 0.978,
+        slPct: '-2.2%',
+        slValue: -0.022,
+        trailingStop: true,
+        trailingOffsetPct: '+1.6%',
+        trailingPct: '+0.2%',
+        initialTpRatio: 1.036,
+        initialTpPct: '+3.6%'
+    },
+    bot4: {
+        name: 'FVGReclaimFiller15m',
+        slRatio: 0.984,
+        slPct: '-1.6%',
+        slValue: -0.016,
+        trailingStop: false,
+        trailingOffsetPct: null,
+        trailingPct: null,
+        initialTpRatio: 1.025,
+        initialTpPct: '+2.5%'
+    }
+};
+
 const STRATEGY_ROI_TABLES = {
-    bot1: [ // HighFrequencySweepApex5m (5m): {"0": 0.0170, "180": 0.005}
-        { min: 180, roi: 0.005 },
-        { min: 0,   roi: 0.017 }
+    bot1: [ // HighFrequencySweepApex5m (5m): {"0": 0.028, "180": 0.012, "360": 0.006}
+        { min: 360, roi: 0.006 },
+        { min: 180, roi: 0.012 },
+        { min: 0,   roi: 0.028 }
     ],
-    bot2: [ // LiquiditySweepPro15m (15m): {"0": 0.032, "60": 0.022, "120": 0.015, "240": 0.010, "360": 0.007}
-        { min: 360, roi: 0.007 },
-        { min: 240, roi: 0.010 },
-        { min: 120, roi: 0.015 },
-        { min: 60,  roi: 0.022 },
-        { min: 0,   roi: 0.032 }
+    bot2: [ // LiquiditySweepPro15m (15m): {"0": 0.034, "90": 0.025, "180": 0.016, "360": 0.008}
+        { min: 360, roi: 0.008 },
+        { min: 180, roi: 0.016 },
+        { min: 90,  roi: 0.025 },
+        { min: 0,   roi: 0.034 }
     ],
-    bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.035, "30": 0.024, "60": 0.018, "120": 0.012, "240": 0.009}
-        { min: 240, roi: 0.009 },
-        { min: 120, roi: 0.012 },
-        { min: 60,  roi: 0.018 },
-        { min: 30,  roi: 0.024 },
-        { min: 0,   roi: 0.035 }
+    bot3: [ // TTMSqueezeBreakoutElite (15m): {"0": 0.036, "60": 0.024, "180": 0.014, "360": 0.008}
+        { min: 360, roi: 0.008 },
+        { min: 180, roi: 0.014 },
+        { min: 60,  roi: 0.024 },
+        { min: 0,   roi: 0.036 }
     ],
-    bot4: [ // FVGReclaimFiller15m (15m): {"0": 0.030, "240": 0.018, "480": 0.008}
-        { min: 480, roi: 0.008 },
-        { min: 240, roi: 0.018 },
-        { min: 0,   roi: 0.030 }
+    bot4: [ // FVGReclaimFiller15m (15m): {"0": 0.025, "180": 0.015, "360": 0.006}
+        { min: 360, roi: 0.006 },
+        { min: 180, roi: 0.015 },
+        { min: 0,   roi: 0.025 }
     ]
 };
 
@@ -552,9 +598,15 @@ async function checkTradeMilestones() {
             const pnlPct = (pnlRatio * 100).toFixed(2);
             const openRate = parseFloat(trade.open_rate);
             const currentRate = parseFloat(trade.current_rate);
-            const tpPrice = (openRate * 1.015).toFixed(4);
+            const stratDefaults = STRATEGY_DEFAULTS[trade.botKey] || STRATEGY_DEFAULTS.bot1;
+            const elapsedMin = Math.max(0, Math.round((now - (trade.open_timestamp || now)) / 60000));
+            const activeRoi = getActiveStrategyRoi(trade.botKey, elapsedMin);
+            const tpPrice = (openRate * (1 + activeRoi)).toFixed(4);
+            const tpPctStr = `+${(activeRoi * 100).toFixed(1)}%`;
+            const slPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * stratDefaults.slRatio).toFixed(4);
+            const slPctStr = trade.stop_loss_pct !== undefined ? `${trade.stop_loss_pct.toFixed(1)}%` : stratDefaults.slPct;
 
-            // Milestone 1: Reaching +1.0% profit (Closing in on +1.5% TP)
+            // Milestone 1: Reaching +1.0% profit (Closing in on Take Profit)
             if (pnlRatio >= 0.010 && !state.plus1) {
                 state.plus1 = true;
                 const msg = `🔔 *TRADE MILESTONE: +1.0% PROFIT*\n` +
@@ -562,7 +614,7 @@ async function checkTradeMilestones() {
                             `🪙 *Pair:* ${trade.pair}\n` +
                             `📈 *Current PnL:* *+${pnlPct}%*\n` +
                             `💵 *Current Price:* ${currentRate}\n` +
-                            `🎯 *Take Profit Target:* ${tpPrice} (+1.5%)\n` +
+                            `🎯 *Take Profit Target:* ${tpPrice} (${tpPctStr})\n` +
                             `⏱️ *Status:* Approaching Take Profit! 🚀\n` +
                             `⏰ *Time:* ${toKarachiTime(new Date())}`;
 
@@ -573,13 +625,12 @@ async function checkTradeMilestones() {
             // Milestone 2: Dipping to -1.0% (Risk Warning)
             if (pnlRatio <= -0.010 && !state.minus1) {
                 state.minus1 = true;
-                const slPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * 0.985).toFixed(4);
                 const msg = `⚠️ *TRADE WARNING: -1.0% DRAWDOWN*\n` +
                             `────────────────────\n` +
                             `🪙 *Pair:* ${trade.pair}\n` +
                             `📉 *Current PnL:* *${pnlPct}%*\n` +
                             `💵 *Current Price:* ${currentRate}\n` +
-                            `🛡️ *Stop Loss Level:* ${slPrice} (-1.5%)\n` +
+                            `🛡️ *Stop Loss Level:* ${slPrice} (${slPctStr})\n` +
                             `⏱️ *Time:* ${toKarachiTime(new Date())}`;
 
                 await sendWhatsAppSafe(TARGET_JID, { text: msg });
@@ -805,25 +856,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     const currentRate = parseFloat(trade.current_rate || trade.open_rate);
                     const stakeVal = trade.stake_amount ? parseFloat(trade.stake_amount).toFixed(2) : (trade.amount ? (trade.amount * openRate).toFixed(2) : 'N/A');
 
-                    // Strategy-specific Stop Loss and Take Profit
-                    let defaultSlRatio = 0.985;
-                    let defaultSlPct = '-1.5%';
-                    let defaultTpRatio = 1.025;
-                    let defaultTpPct = '+2.5%';
-
-                    if (bot.id === 2) {
-                        // LiquiditySweepPro15m (15m)
-                        defaultSlRatio = 0.982;
-                        defaultSlPct = '-1.8%';
-                        defaultTpRatio = 1.032;
-                        defaultTpPct = '+3.2%';
-                    } else if (bot.id === 3) {
-                        // TTMSqueezeBreakoutElite (15m)
-                        defaultSlRatio = 0.980;
-                        defaultSlPct = '-2.0%';
-                        defaultTpRatio = 1.035;
-                        defaultTpPct = '+3.5%';
-                    }
+                    // Strategy-specific Stop Loss, Take Profit and Trailing Stop
+                    const botKey = trade.botKey || `bot${bot.id}`;
+                    const stratDefaults = STRATEGY_DEFAULTS[botKey] || STRATEGY_DEFAULTS.bot1;
+                    const defaultSlRatio = stratDefaults.slRatio;
+                    const defaultSlPct = stratDefaults.slPct;
 
                     const tradeId = String(trade.trade_id);
                     let stopLossPrice = trade.stop_loss_abs ? parseFloat(trade.stop_loss_abs).toFixed(4) : (openRate * defaultSlRatio).toFixed(4);
@@ -837,7 +874,6 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
                     const openTimestamp = trade.open_timestamp || (trade.open_date ? new Date(trade.open_date).getTime() : Date.now());
                     const elapsedMin = Math.max(0, Math.round((Date.now() - openTimestamp) / 60000));
-                    const botKey = trade.botKey || `bot${bot.id}`;
                     const activeRoi = getActiveStrategyRoi(botKey, elapsedMin);
 
                     let takeProfitPrice = (openRate * (1 + activeRoi)).toFixed(4);
@@ -855,12 +891,18 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                         }
                     }
 
+                    let trailInfo = '';
+                    if (stratDefaults.trailingStop) {
+                        trailInfo = `\n     🔄 Trailing Stop: *Active* (Arm: ${stratDefaults.trailingOffsetPct} | Trail: ${stratDefaults.trailingPct})`;
+                    }
+
                     msg += `  ${i + 1}. *${trade.pair}* (ID: #${trade.trade_id})\n` +
                            `     📈 PnL: ${emoji} *${sign}${profitPct}%*${pnlUsdtStr}\n` +
                            `     💵 Open: *${openRate}* | Current: *${currentRate}*\n` +
                            `     📦 Position: *${stakeVal} USDT*\n` +
                            `     🛡️ Stop Loss: *${stopLossPrice}* (${slDisplayPct})\n` +
-                           `     🎯 Take Profit: *${takeProfitPrice}* (${tpDisplayPct})\n` +
+                           `     🎯 Take Profit: *${takeProfitPrice}* (${tpDisplayPct})` +
+                           `${trailInfo}\n` +
                            `     ⏱️ Opened: ${openTime}${durStr ? ` (${durStr} ago)` : ''}\n` +
                            `     🏷️ Tag: ${trade.enter_tag || 'entry'}\n\n`;
                 });
@@ -1849,13 +1891,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
             return `ℹ️ *QUAD-BOT SYSTEM STATUS*\n────────────────────\n` +
                    `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: TTMSqueezeBreakoutElite (15m Squeeze Breakout | Priority 4 - Master)\n\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m)\n` +
+                   `   Config: SL -2.2% | ROI 3.6%->0.8% | Trail +1.6%/+0.2% | P4 (Master)\n\n` +
                    `🤖 *Bot 4 (Port ${FT_BOTS.bot4.port}):* ${v4 ? `v${v4.version}` : 'Offline'}\n` +
-                   `   Strategy: FVGReclaimFiller15m (15m FVG Reclaim Filler | Priority 3)\n\n` +
+                   `   Strategy: FVGReclaimFiller15m (15m)\n` +
+                   `   Config: SL -1.6% | ROI 2.5%->0.6% | No Trail | P3\n\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencySweepApex5m (5m Micro-Sweep | Priority 2)\n\n` +
+                   `   Strategy: HighFrequencySweepApex5m (5m)\n` +
+                   `   Config: SL -2.5% | ROI 2.8%->0.6% | No Trail | P2\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: LiquiditySweepPro15m (15m Macro Reclaim | Priority 1)\n\n` +
+                   `   Strategy: LiquiditySweepPro15m (15m)\n` +
+                   `   Config: SL -2.0% | ROI 3.4%->0.8% | Trail +2.4%/+1.0% | P1\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -2072,22 +2118,24 @@ app.post('/trade-alert', async (req, res) => {
             const entryRate = parseFloat(data.open_rate || data.rate || 0);
             const isSweepPro = (data.bot_label && (data.bot_label.includes('SWEEP PRO') || data.bot_label.includes('LIQUIDITY SWEEP'))) || (data.enter_tag && data.enter_tag.includes('macro_swing_reclaim'));
             const isTTM = (data.bot_label && data.bot_label.includes('TTM')) || (data.enter_tag && (data.enter_tag.includes('squeeze') || data.enter_tag.includes('ttm')));
-            let slRatio = 0.985;
-            let slPct = '-1.5%';
-            if (isSweepPro) {
-                slRatio = 0.982;
-                slPct = '-1.8%';
-            } else if (isTTM) {
-                slRatio = 0.980;
-                slPct = '-2.0%';
-            }
-            const sl = entryRate ? (entryRate * slRatio).toFixed(4) : 'N/A';
+            const isFVG = (data.bot_label && (data.bot_label.includes('FVG') || data.bot_label.includes('FILLER'))) || (data.enter_tag && (data.enter_tag.includes('fvg') || data.enter_tag.includes('filler') || data.enter_tag.includes('reclaim')));
+
+            let stratConf = STRATEGY_DEFAULTS.bot1;
+            if (isSweepPro) stratConf = STRATEGY_DEFAULTS.bot2;
+            else if (isTTM) stratConf = STRATEGY_DEFAULTS.bot3;
+            else if (isFVG) stratConf = STRATEGY_DEFAULTS.bot4;
+
+            const sl = entryRate ? (entryRate * stratConf.slRatio).toFixed(4) : 'N/A';
+            const tp = entryRate ? (entryRate * stratConf.initialTpRatio).toFixed(4) : 'N/A';
+            const trailText = stratConf.trailingStop ? `Arm ${stratConf.trailingOffsetPct} | Trail ${stratConf.trailingPct}` : null;
 
             messageText = `🟢 *${botTitle} BUY ORDER*\n` +
                           `────────────────────\n` +
                           `🪙 *Pair:* ${data.pair || 'N/A'}\n` +
                           `💵 *Entry Rate:* *${data.open_rate || data.rate || 'N/A'}*\n` +
-                          `🛡️ *Stop Loss:* *${sl}* (${slPct})\n` +
+                          `🛡️ *Stop Loss:* *${sl}* (${stratConf.slPct})\n` +
+                          `🎯 *Target TP:* *${tp}* (${stratConf.initialTpPct})\n` +
+                          (trailText ? `🔄 *Trailing Stop:* ${trailText}\n` : '') +
                           `📦 *Stake:* ${data.stake_amount || 'N/A'} ${data.stake_currency || 'USDT'}\n` +
                           `🏷️ *Tag:* ${data.enter_tag || 'trade_entry'}\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;

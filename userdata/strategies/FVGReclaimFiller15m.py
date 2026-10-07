@@ -37,13 +37,13 @@ class FVGReclaimFiller15m(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.030,      # Target +3.0% take profit
-        "240": 0.018,    # After 4 hours target +1.8%
-        "480": 0.008     # Max hold 8 hours capital turnover
+        "0": 0.025,      # Optimal take profit target at +2.5%
+        "180": 0.015,    # After 3 hours decay to +1.5%
+        "360": 0.006     # Capital turnover threshold at +0.6% after 6 hours
     }
 
     stoploss = -0.016
-    trailing_stop = True
+    trailing_stop = False
     trailing_stop_positive = 0.008
     trailing_stop_positive_offset = 0.020
     trailing_only_offset_is_reached = True

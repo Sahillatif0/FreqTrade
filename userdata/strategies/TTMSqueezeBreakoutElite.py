@@ -37,16 +37,15 @@ class TTMSqueezeBreakoutElite(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.035,      # Top explosive impulse (+3.5%)
-        "30": 0.024,     # Fast momentum runner (+2.4%)
-        "60": 0.018,     # Core target (+1.8%)
-        "120": 0.012,    # Standard target (+1.2%)
-        "240": 0.009     # Capital turnover floor (+0.9%)
+        "0": 0.036,      # Top explosive impulse (+3.6%)
+        "60": 0.024,     # 1 hour target (+2.4%)
+        "180": 0.014,    # 3 hours target (+1.4%)
+        "360": 0.008     # Rotation floor (+0.8%)
     }
 
     stoploss = -0.022
     trailing_stop = True
-    trailing_stop_positive = 0.005
+    trailing_stop_positive = 0.002
     trailing_stop_positive_offset = 0.016
     trailing_only_offset_is_reached = True
 

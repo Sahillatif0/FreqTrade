@@ -37,17 +37,16 @@ class LiquiditySweepPro15m(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.032,      # Top impulse bounce (+3.2%)
-        "60": 0.022,     # 1 hour target (+2.2%)
-        "120": 0.015,    # 2 hours target (+1.5%)
-        "240": 0.010,    # 4 hours target (+1.0%)
-        "360": 0.007     # Rotation floor (+0.7%)
+        "0": 0.034,      # Top impulse bounce (+3.4%)
+        "90": 0.025,     # 1.5 hours target (+2.4%)
+        "180": 0.016,    # 3 hours target (+1.6%)
+        "360": 0.008     # Rotation floor (+0.8%)
     }
 
-    stoploss = -0.018
+    stoploss = -0.02
     trailing_stop = True
-    trailing_stop_positive = 0.007
-    trailing_stop_positive_offset = 0.018
+    trailing_stop_positive = 0.01
+    trailing_stop_positive_offset = 0.024
     trailing_only_offset_is_reached = True
 
     process_only_new_candles = True
