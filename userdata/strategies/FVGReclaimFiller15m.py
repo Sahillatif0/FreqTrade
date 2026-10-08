@@ -66,6 +66,20 @@ class FVGReclaimFiller15m(IStrategy):
             {
                 "method": "CooldownPeriod",
                 "stop_duration_candles": 1
+            },
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 24,
+                "trade_limit": 2,
+                "stop_duration_candles": 16,
+                "only_per_pair": False
+            },
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": 96,
+                "trade_limit": 1,
+                "stop_duration_candles": 48,
+                "max_allowed_drawdown": 0.05
             }
         ]
 
