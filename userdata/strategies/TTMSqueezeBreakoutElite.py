@@ -6,7 +6,7 @@ from pandas import DataFrame
 from datetime import datetime
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
-from freqtrade.strategy import IStrategy
+from freqtrade.strategy import IStrategy, merge_informative_pair
 import sys
 import os
 
@@ -71,9 +71,21 @@ class TTMSqueezeBreakoutElite(IStrategy):
         ]
 
     def informative_pairs(self):
-        return []
+        return [("BTC/USDT", "15m")]
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # 0. Bitcoin Macro & Crash Guard (15m Informative Pair)
+        if self.dp:
+            btc_15m = self.dp.get_pair_dataframe(pair="BTC/USDT", timeframe="15m")
+            if not btc_15m.empty:
+                btc_15m["btc_ema_50"] = ta.EMA(btc_15m, timeperiod=50)
+                btc_15m["btc_rsi"] = ta.RSI(btc_15m, timeperiod=14)
+                # BTC Dynamic Crash Guard: Allows profitable runs while blocking deep flash crashes
+                btc_15m["btc_safe"] = (btc_15m["close"] > btc_15m["btc_ema_50"] * 0.995) & (btc_15m["btc_rsi"] >= 42)
+                dataframe = merge_informative_pair(
+                    dataframe, btc_15m, self.timeframe, "15m", ffill=True
+                )
+
         # 1. Bollinger Bands (20, 2.0 std)
         bollinger = qtpylib.bollinger_bands(dataframe["close"], window=20, stds=2.0)
         dataframe["bb_lower"] = bollinger["lower"]
@@ -122,14 +134,15 @@ class TTMSqueezeBreakoutElite(IStrategy):
             (dataframe["close"] > dataframe["ema_50"]) &                      # Macro bull trend
             (dataframe["ema_50_slope"] >= 0.015) &                            # Clearly sloping up
             (dataframe["close"] > dataframe["open"]) &                        # Solid green bar
-            (dataframe["body"] >= dataframe["candle_range"] * 0.45) &         # Strong body, not an exhausted wick
-            (dataframe["upper_wick"] <= dataframe["body"] * 0.9) &            # Tighter top wick control (no rejection)
+            (dataframe["body"] >= dataframe["candle_range"] * 0.50) &         # Strong body, not an exhausted wick (min 50% body)
+            (dataframe["upper_wick"] <= dataframe["body"] * 0.60) &            # Tighter top wick control (no selling rejection)
             (dataframe["dist_ema20_pct"] <= 3.0) &                            # Anti-Top Filter: Not over-extended from mean
-            (dataframe["adx"] >= 19) &                                        # Clear trend strength (eliminates chop)
+            (dataframe["adx"] >= 19) &                                        # Clear trend strength (eliminates chop fakeouts)
             (dataframe["macd_hist"] > 0) &                                    # Positive momentum
             (dataframe["macd_hist"] > dataframe["macd_hist"].shift(1)) &      # Accelerating impulse
             (dataframe["rsi"] >= 53) & (dataframe["rsi"] <= 66) &            # Non-overbought sweet spot
-            (dataframe["volume"] > dataframe["volume_sma"] * 1.25)           # High volume breakout confirmation
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.25) &          # High volume breakout confirmation
+            (dataframe.get("btc_safe_15m", pd.Series(True, index=dataframe.index)) == True) # BTC Market Crash Filter
         )
 
         dataframe.loc[squeeze_breakout, "enter_long"] = 1
