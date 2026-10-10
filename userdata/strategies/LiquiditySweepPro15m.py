@@ -133,13 +133,13 @@ class LiquiditySweepPro15m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        """Yields/preempts balance if higher priority strategy (Apex=2 or TTM=3) requests entry, protected by Soft Floor (-0.50%)"""
+        """Yields/preempts balance if higher priority strategy (FVG=3, TTM=4) requests entry, protected by Soft Floor (-0.50%)"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 1:  # Yields to Apex (P2), FVG (P3), and TTM (P4)
+                    if pending.get("priority", 1) > 2:  # Liquidity is Priority 2, yields to FVG (P3) and TTM (P4)
                         # Soft floor rule: Only preempt if profit is >= -0.50%
                         if current_profit >= -0.005:
                             logger.info(f"[LiquiditySweepPro15m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")

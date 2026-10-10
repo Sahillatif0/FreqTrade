@@ -36,12 +36,7 @@ class TTMSqueezeBreakoutElite(IStrategy):
     timeframe = "15m"
     can_short = False
 
-    minimal_roi = {
-        "0": 0.036,      # Top explosive impulse (+3.6%)
-        "60": 0.024,     # 1 hour target (+2.4%)
-        "180": 0.014,    # 3 hours target (+1.4%)
-        "360": 0.008     # Rotation floor (+0.8%)
-    }
+    minimal_roi = {"0": 0.036, "60": 0.024, "180": 0.014, "360": 0.008}
 
     stoploss = -0.022
     trailing_stop = True

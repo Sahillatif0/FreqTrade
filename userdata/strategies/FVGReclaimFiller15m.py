@@ -5,7 +5,7 @@ import pandas as pd
 from pandas import DataFrame
 from datetime import datetime
 import talib.abstract as ta
-from freqtrade.strategy import IStrategy
+from freqtrade.strategy import IStrategy, merge_informative_pair
 import sys
 import os
 
@@ -56,8 +56,9 @@ class FVGReclaimFiller15m(IStrategy):
     order_types = {
         "entry": "limit",
         "exit": "limit",
-        "stoploss": "market",
-        "stoploss_on_exchange": False
+        "stoploss": "limit",
+        "stoploss_on_exchange": True,
+        "stoploss_on_exchange_limit_ratio": 0.99
     }
 
     @property
@@ -111,13 +112,13 @@ class FVGReclaimFiller15m(IStrategy):
         dataframe.loc[:, "enter_tag"] = ""
 
         # High-Precision 85%+ FVG Reclaim Engine:
-        # 1. Bullish FVG created recently
-        # 2. Price retraced into the gap (low <= fvg_high of gap)
-        # 3. Price holds above gap floor (close > fvg_low of gap)
-        # 4. Bullish rejection confirmation (close > open)
-        # 5. Macro trend alignment: price above both 50 EMA and 100 EMA
-        # 6. Trend strength filter: ADX >= 16 (eliminates dead-market fakeouts)
-        # 7. Climax filter: distance to 50 EMA <= 8.0% (avoids buying exhausted tops)
+        # 2. Bullish FVG created recently
+        # 3. Price retraced into the gap (low <= fvg_high of gap)
+        # 4. Price holds above gap floor (close > fvg_low of gap)
+        # 5. Bullish rejection confirmation (close > open)
+        # 6. Macro trend alignment: price above both 50 EMA and 100 EMA
+        # 7. Trend strength filter: ADX >= 16 (eliminates dead-market fakeouts)
+        # 8. Climax filter: distance to 50 EMA <= 8.0% (avoids buying exhausted tops)
         fvg_retest = (
             dataframe["has_fvg"].shift(1) &
             (dataframe["low"] <= dataframe["fvg_high"].shift(2)) &
