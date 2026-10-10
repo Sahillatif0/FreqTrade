@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ![freqtrade](https://raw.githubusercontent.com/freqtrade/freqtrade/develop/docs/assets/freqtrade_poweredby.svg)
 
 [![Freqtrade CI](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml)
@@ -234,3 +235,6 @@ To run this bot we recommend you a cloud instance with a minimum of:
 - [TA-Lib](https://ta-lib.github.io/ta-lib-python/)
 - [virtualenv](https://virtualenv.pypa.io/en/stable/installation.html) (Recommended)
 - [Docker](https://www.docker.com/products/docker) (Recommended)
+=======
+# FreqTrade
+>>>>>>> 36c0a197e4ece4a7a1a0df0ff32463effc5930ef

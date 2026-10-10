@@ -119,6 +119,8 @@ class FVGReclaimFiller15m(IStrategy):
         # 6. Macro trend alignment: price above both 50 EMA and 100 EMA
         # 7. Trend strength filter: ADX >= 16 (eliminates dead-market fakeouts)
         # 8. Climax filter: distance to 50 EMA <= 8.0% (avoids buying exhausted tops)
+        # 9. Exhaustion Retest Shield: If trend is extended (ADX > 30), require healthy volume (>= 0.80x SMA)
+        #    Quiet early retests (ADX <= 30) are permitted even on lower volume.
         fvg_retest = (
             dataframe["has_fvg"].shift(1) &
             (dataframe["low"] <= dataframe["fvg_high"].shift(2)) &
@@ -127,7 +129,8 @@ class FVGReclaimFiller15m(IStrategy):
             (dataframe["close"] > dataframe["ema_50"]) &
             (dataframe["close"] > dataframe["ema_100"]) &
             (dataframe["adx"] >= 16) &
-            (dataframe["dist_ema50"] <= 8.0)
+            (dataframe["dist_ema50"] <= 8.0) &
+            ((dataframe["volume"] >= dataframe["volume_sma"] * 0.80) | (dataframe["adx"] <= 30.0))
         )
 
         dataframe.loc[fvg_retest, "enter_long"] = 1
