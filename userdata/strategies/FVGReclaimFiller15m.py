@@ -177,14 +177,14 @@ class FVGReclaimFiller15m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        """Yields to Master TTM (Priority 5) protected by Soft Floor (-0.50%)"""
+        """Yields to Bot 5 (Priority 4) and Master TTM (Priority 5) protected by Soft Floor (-0.50%)"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    # FVG is Priority 4 -> yields only to TTM (Priority 5)
-                    if pending.get("priority", 1) > 4:
+                    # FVG is Priority 3 -> yields to Bot 5 (Priority 4) and TTM (Priority 5)
+                    if pending.get("priority", 1) > 3:
                         if current_profit >= -0.005:
                             logger.info(f"[FVGReclaimFiller15m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
                             return "preempted_for_high_priority"

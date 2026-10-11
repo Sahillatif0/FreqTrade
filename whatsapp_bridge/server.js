@@ -244,14 +244,14 @@ const STRATEGY_DEFAULTS = {
     },
     bot5: {
         name: 'VolatilitySqueezeBreakoutElite15m',
-        slRatio: 0.975,
-        slPct: '-2.5%',
-        slValue: -0.025,
+        slRatio: 0.972,
+        slPct: '-2.8%',
+        slValue: -0.028,
         trailingStop: true,
-        trailingOffsetPct: '+2.5%',
-        trailingPct: '+1.5%',
-        initialTpRatio: 1.10,
-        initialTpPct: '+10.0%'
+        trailingOffsetPct: '+4.0%',
+        trailingPct: '+1.2%',
+        initialTpRatio: 1.080,
+        initialTpPct: '+8.0%'
     }
 };
 
@@ -278,11 +278,11 @@ const STRATEGY_ROI_TABLES = {
         { min: 180, roi: 0.015 },
         { min: 0,   roi: 0.025 }
     ],
-    bot5: [ // VolatilitySqueezeBreakoutElite15m (15m): {"0": 0.10, "60": 0.05, "180": 0.025, "360": 0.012}
+    bot5: [ // VolatilitySqueezeBreakoutElite15m (15m): {"0": 0.080, "60": 0.045, "180": 0.025, "360": 0.012}
         { min: 360, roi: 0.012 },
         { min: 180, roi: 0.025 },
-        { min: 60,  roi: 0.050 },
-        { min: 0,   roi: 0.100 }
+        { min: 60,  roi: 0.045 },
+        { min: 0,   roi: 0.080 }
     ]
 };
 
@@ -850,11 +850,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else {
                     msg += `🟢 No active open trades right now.\n` +
                            `All 5 bots are scanning for high-probability setups! 🔍\n\n` +
-                           `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 5 - Top Master)\n` +
-                           `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 4 - Imbalance Engine)\n` +
-                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 3 - Macro Sweep Reclaim)\n` +
-                           `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 2 - Volatility Squeeze)\n` +
-                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1 - Micro Scalp)`;
+                            `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 5 - Top Master)\n` +
+                            `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 4 - Co-Master Runner)\n` +
+                            `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 3 - Imbalance Engine)\n` +
+                            `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2 - Macro Sweep Reclaim)\n` +
+                            `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1 - Micro Scalp)`;
                 }
                 return msg.trim();
             }
@@ -1959,29 +1959,29 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `     • 60m (1h): +2.4% (1-Hour Target)\n` +
                    `     • 180m (3h): +1.4% (Consolidation Target)\n` +
                    `     • 360m (6h+): +0.8% (Rotation Floor)\n\n` +
+                   `🤖 *Bot 5 (Port ${FT_BOTS.bot5.port}):* ${v5 ? `v${v5.version}` : 'Offline'}\n` +
+                   `   Strategy: VolatilitySqueezeBreakoutElite15m (15m) | P4 (Co-Master Squeeze Runner)\n` +
+                   `   Risk: SL -2.8% | Trailing: +4.0% trigger ➔ +1.2% lock\n` +
+                   `   📊 Full ROI Table:\n` +
+                   `     • 0m (0h): +8.0% (Max Squeeze Expansion Runner)\n` +
+                   `     • 60m (1h): +4.5% (1-Hour Momentum Target)\n` +
+                   `     • 180m (3h): +2.5% (3-Hour Consolidation)\n` +
+                   `     • 360m (6h+): +1.2% (Capital Rotation Floor)\n\n` +
                    `🤖 *Bot 4 (Port ${FT_BOTS.bot4.port}):* ${v4 ? `v${v4.version}` : 'Offline'}\n` +
-                   `   Strategy: FVGReclaimFiller15m (15m) | P4 (Imbalance Master)\n` +
+                   `   Strategy: FVGReclaimFiller15m (15m) | P3 (Imbalance Engine)\n` +
                    `   Risk: SL -1.6% | No Trailing\n` +
                    `   📊 Full ROI Table:\n` +
                    `     • 0m (0h): +2.5% (Optimal Retest Target)\n` +
                    `     • 180m (3h): +1.5% (Mid-Decay Target)\n` +
                    `     • 360m (6h+): +0.6% (Turnover Floor)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: LiquiditySweepPro15m (15m) | P3 (Macro Sweep Reclaim)\n` +
+                   `   Strategy: LiquiditySweepPro15m (15m) | P2 (Macro Sweep Reclaim)\n` +
                    `   Risk: SL -2.0% | Trailing: +2.4% trigger ➔ +1.0% lock\n` +
                    `   📊 Full ROI Table:\n` +
                    `     • 0m (0h): +3.4% (Deep Wick Impulse)\n` +
                    `     • 90m (1.5h): +2.5% (1.5-Hour Runner Target)\n` +
                    `     • 180m (3h): +1.6% (3-Hour Decay Target)\n` +
                    `     • 360m (6h+): +0.8% (Rotation Floor)\n\n` +
-                   `🤖 *Bot 5 (Port ${FT_BOTS.bot5.port}):* ${v5 ? `v${v5.version}` : 'Offline'}\n` +
-                   `   Strategy: VolatilitySqueezeBreakoutElite15m (15m) | P2 (Volatility Squeeze)\n` +
-                   `   Risk: SL -2.5% | Trailing: +2.5% trigger ➔ +1.5% lock\n` +
-                   `   📊 Full ROI Table:\n` +
-                   `     • 0m (0h): +10.0% (Max Impulse Runner)\n` +
-                   `     • 60m (1h): +5.0% (1-Hour Target)\n` +
-                   `     • 180m (3h): +2.5% (3-Hour Consolidation)\n` +
-                   `     • 360m (6h+): +1.2% (Turnover Floor)\n\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
                    `   Strategy: HighFrequencySweepApex5m (5m) | P1 (Micro Scalp)\n` +
                    `   Risk: SL -2.5% | No Trailing\n` +
@@ -2014,7 +2014,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 bot4: {
                     label: '📐 FVG Reclaim Filler (Bot 4 - 15m)',
                     port: FT_BOTS.bot4.port,
-                    priority: 'Priority 4 (Imbalance Engine)',
+                    priority: 'Priority 3 (Imbalance Engine)',
                     strategy: 'FVGReclaimFiller15m',
                     stoploss: '-1.6%',
                     trailing: 'None (Decaying Profit Cap)',
@@ -2027,7 +2027,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 bot2: {
                     label: '🌊 Sweep Pro (Bot 2 - 15m)',
                     port: FT_BOTS.bot2.port,
-                    priority: 'Priority 3 (Macro Sweep Reclaim)',
+                    priority: 'Priority 2 (Macro Sweep Reclaim)',
                     strategy: 'LiquiditySweepPro15m',
                     stoploss: '-2.0%',
                     trailing: 'Offset +2.4% ➔ Trail +1.0%',
@@ -2041,13 +2041,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 bot5: {
                     label: '💥 Squeeze Elite (Bot 5 - 15m)',
                     port: FT_BOTS.bot5.port,
-                    priority: 'Priority 2 (Volatility Squeeze)',
+                    priority: 'Priority 4 (Co-Master Squeeze Runner)',
                     strategy: 'VolatilitySqueezeBreakoutElite15m',
-                    stoploss: '-2.5%',
-                    trailing: 'Offset +2.5% ➔ Trail +1.5%',
+                    stoploss: '-2.8%',
+                    trailing: 'Offset +4.0% ➔ Trail +1.2%',
                     steps: [
-                        { time: '0 min (0h)', target: '+10.0%', desc: 'Max Impulse Runner' },
-                        { time: '60 min (1h)', target: '+5.0%', desc: '1-Hour Target' },
+                        { time: '0 min (0h)', target: '+8.0%', desc: 'Max Squeeze Expansion Runner' },
+                        { time: '60 min (1h)', target: '+4.5%', desc: '1-Hour Target' },
                         { time: '180 min (3h)', target: '+2.5%', desc: '3-Hour Consolidation' },
                         { time: '360 min (6h+)', target: '+1.2%', desc: 'Turnover Floor' }
                     ]
@@ -2067,7 +2067,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
             };
 
-            let selectedBots = ['bot3', 'bot4', 'bot2', 'bot5', 'bot1'];
+            let selectedBots = ['bot3', 'bot5', 'bot4', 'bot2', 'bot1'];
             if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') selectedBots = ['bot1'];
             else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') selectedBots = ['bot2'];
             else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') selectedBots = ['bot3'];

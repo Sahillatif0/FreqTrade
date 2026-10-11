@@ -136,13 +136,13 @@ class HighFrequencySweepApex5m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        """Preempts if higher priority strategy (LIQ=2, FVG=3, TTM=4) requested balance, protected by Soft Floor (-0.50%)"""
+        """Preempts if higher priority strategy (SweepPro=2, FVG=3, Squeeze=4, TTM=5) requested balance, protected by Soft Floor (-0.50%)"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 1:  # Apex is Priority 1, yields to Squeeze (P2), SweepPro (P3), FVG (P4), and TTM (P5)
+                    if pending.get("priority", 1) > 1:  # Apex is Priority 1, yields to SweepPro (P2), FVG (P3), Squeeze (P4), and TTM (P5)
                         # Soft floor rule: Only preempt if profit is >= -0.50%
                         if current_profit >= -0.005:
                             logger.info(f"[HighFrequencySweepApex5m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")

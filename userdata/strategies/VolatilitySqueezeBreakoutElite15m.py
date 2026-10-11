@@ -32,17 +32,17 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.10,      # +10% max runner
-        "60": 0.05,     # +5% after 1 hour
-        "180": 0.025,   # +2.5% after 3 hours
-        "360": 0.012    # +1.2% floor after 6 hours
+        "0": 0.080,      # +8.0% max runner
+        "60": 0.045,     # +4.5% after 1 hour
+        "180": 0.025,    # +2.5% after 3 hours
+        "360": 0.012     # +1.2% floor after 6 hours
     }
 
-    stoploss = -0.025   # 2.5% stoploss allows healthy re-test wicks
+    stoploss = -0.028   # 2.8% stoploss allows healthy re-test wicks without shakeout
 
     trailing_stop = True
-    trailing_stop_positive = 0.015
-    trailing_stop_positive_offset = 0.025
+    trailing_stop_positive = 0.012
+    trailing_stop_positive_offset = 0.040
     trailing_only_offset_is_reached = True
 
     process_only_new_candles = True
@@ -53,7 +53,7 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
     order_types = {
         "entry": "limit",
         "exit": "limit",
-        "stoploss": "limit",
+        "stoploss": "market",
         "stoploss_on_exchange": True
     }
 
@@ -123,8 +123,8 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
         btc_cond = dataframe[btc_col] == 1 if btc_col in dataframe.columns else True
 
         squeeze_breakout = (
-            # Energy was compressed in recent candles (1 to 3 candles back)
-            (dataframe["squeeze_on"].shift(1) | dataframe["squeeze_on"].shift(2) | dataframe["squeeze_on"].shift(3)) &
+            # Energy was compressed in recent candles (1 to 4 candles back)
+            (dataframe["squeeze_on"].shift(1) | dataframe["squeeze_on"].shift(2) | dataframe["squeeze_on"].shift(3) | dataframe["squeeze_on"].shift(4)) &
             # Explosive breakout release: Upper Bollinger expands beyond Upper Keltner Channel
             (dataframe["bb_upper"] > dataframe["kc_upper"]) &
             # Strong bullish candle body and above median
@@ -151,13 +151,13 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        # 1. Preempts if higher priority strategy (Priority >= 3) has requested balance, protected by Soft Floor (-0.50%)
+        # 1. Preempts if higher priority strategy (Priority 5 - TTM) has requested balance, protected by Soft Floor (-0.50%)
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 2:  # Squeeze Elite is Priority 2, yields to SweepPro (P3), FVG (P4), and TTM (P5)
+                    if pending.get("priority", 1) > 4:  # Squeeze Elite is Priority 4, yields only to Master TTM (Priority 5)
                         if current_profit >= -0.005:
                             logger.info(f"[SqueezeElite] Preempting for higher priority: {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
                             return "preempted_for_high_priority"
