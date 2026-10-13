@@ -41,7 +41,7 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
     stoploss = -0.028   # 2.8% stoploss allows healthy re-test wicks without shakeout
 
     trailing_stop = True
-    trailing_stop_positive = 0.012
+    trailing_stop_positive = 0.001
     trailing_stop_positive_offset = 0.040
     trailing_only_offset_is_reached = True
 
@@ -157,7 +157,8 @@ class VolatilitySqueezeBreakoutElite15m(IStrategy):
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 4:  # Squeeze Elite is Priority 4, yields only to Master TTM (Priority 5)
+                    my_prio = pc.PRIORITY.get("VolatilitySqueezeBreakoutElite15m", 5)
+                    if pending.get("priority", 1) > my_prio:
                         if current_profit >= -0.005:
                             logger.info(f"[SqueezeElite] Preempting for higher priority: {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
                             return "preempted_for_high_priority"

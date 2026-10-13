@@ -178,9 +178,14 @@ class TTMSqueezeBreakoutElite(IStrategy):
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    if pending.get("priority", 1) > 5:  # TTM is Master Priority 5, never preempted by lower priority
-                        logger.info(f"[TTMSqueeze] Preempting for higher priority: {pending.get('strategy')}")
-                        return "preempted_for_high_priority"
+                    my_prio = pc.PRIORITY.get("TTMSqueezeBreakoutElite", 2)
+                    if pending.get("priority", 1) > my_prio:
+                        if current_profit >= -0.005:
+                            logger.info(f"[TTMSqueeze] Preempting for higher priority: {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
+                            return "preempted_for_high_priority"
+                        else:
+                            pc.reject_preemption("TTMSqueezeBreakoutElite", pair, current_profit)
+                            logger.info(f"[TTMSqueeze] Preemption blocked by Soft Floor: current profit {current_profit:.2%} < -0.50%")
             except Exception as e:
                 logger.warning(f"[TTMSqueeze] Coordinator check error: {e}")
         return None

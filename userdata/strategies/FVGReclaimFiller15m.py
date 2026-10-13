@@ -37,9 +37,9 @@ class FVGReclaimFiller15m(IStrategy):
     can_short = False
 
     minimal_roi = {
-        "0": 0.025,      # Optimal take profit target at +2.5%
-        "180": 0.015,    # After 3 hours decay to +1.5%
-        "360": 0.006     # Capital turnover threshold at +0.6% after 6 hours
+        "0": 0.027,      # Optimal take profit target at +2.7%
+        "240": 0.018,    # After 4 hours decay to +1.8%
+        "480": 0.008     # Capital turnover threshold at +0.8% after 8 hours
     }
 
     stoploss = -0.016
@@ -182,14 +182,14 @@ class FVGReclaimFiller15m(IStrategy):
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime, current_rate: float,
                     current_profit: float, **kwargs):
-        """Yields to Bot 5 (Priority 4) and Master TTM (Priority 5) protected by Soft Floor (-0.50%)"""
+        """Yields only to higher priority strategies protected by Soft Floor (-0.50%)"""
         if pc:
             try:
                 state = pc.get_state()
                 pending = state.get("pending_intent")
                 if pending and pending.get("status") == "WAITING_FOR_BALANCE":
-                    # FVG is Priority 3 -> yields to Bot 5 (Priority 4) and TTM (Priority 5)
-                    if pending.get("priority", 1) > 3:
+                    my_prio = pc.PRIORITY.get("FVGReclaimFiller15m", 6)
+                    if pending.get("priority", 1) > my_prio:
                         if current_profit >= -0.005:
                             logger.info(f"[FVGReclaimFiller15m] Preempting for {pending.get('strategy')} (Current PnL: {current_profit:.2%})")
                             return "preempted_for_high_priority"

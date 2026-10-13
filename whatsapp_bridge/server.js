@@ -73,10 +73,10 @@ function loadBotConfig(candidateFiles, defaults) {
 // Supports both VPS config names ('config.json', 'config_ignite.json', 'config_breakout.json')
 // and local workspace config names ('config_bot1_compound.json', etc.)
 const FT_BOTS = {
-    bot1: loadBotConfig(['config_apex.json', 'config.json', 'config_bot1_compound.json', 'config_sweep.json'], {
+    bot1: loadBotConfig(['config_tournament.json', 'config_tournament_apex.json', 'config_apex.json', 'config.json'], {
         id: 1,
-        name: 'High Frequency Sweep Apex',
-        tag: '⚡ APEX SWEEP 5M',
+        name: 'Tournament Speed Sniper 5m',
+        tag: '🎯 TOURNAMENT 5M',
         host: '127.0.0.1',
         port: 8080,
         username: 'freqtrader',
@@ -91,7 +91,7 @@ const FT_BOTS = {
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
     }),
-    bot3: loadBotConfig(['config_bot3_ttm.json', 'config_ttm_perfect.json', 'config_breakout.json', 'config_ttm.json'], {
+    bot3: loadBotConfig(['config_ttm_perfect.json', 'config_bot3_ttm.json', 'config_breakout.json', 'config_ttm.json'], {
         id: 3,
         name: 'TTM Squeeze Breakout Elite',
         tag: '🎯 TTM SQUEEZE ELITE',
@@ -117,6 +117,15 @@ const FT_BOTS = {
         port: 8084,
         username: 'freqtrader',
         password: process.env.FT_PASSWORD || '724455'
+    }),
+    bot6: loadBotConfig(['config_scalp.json', 'config_fast_scalp_2h.json', 'config_fast_scalp.json', 'config_scalp_2h.json'], {
+        id: 6,
+        name: 'Fast Scalp Elite 2h 5m',
+        tag: '⚡ FAST SCALP 2H 5M',
+        host: '127.0.0.1',
+        port: 8085,
+        username: 'freqtrader',
+        password: process.env.FT_PASSWORD || '724455'
     })
 };
 
@@ -125,7 +134,8 @@ console.log('[Bridge Config] Loaded bot ports:', {
     bot2: `${FT_BOTS.bot2.host}:${FT_BOTS.bot2.port} (${FT_BOTS.bot2.username})`,
     bot3: `${FT_BOTS.bot3.host}:${FT_BOTS.bot3.port} (${FT_BOTS.bot3.username})`,
     bot4: `${FT_BOTS.bot4.host}:${FT_BOTS.bot4.port} (${FT_BOTS.bot4.username})`,
-    bot5: `${FT_BOTS.bot5.host}:${FT_BOTS.bot5.port} (${FT_BOTS.bot5.username})`
+    bot5: `${FT_BOTS.bot5.host}:${FT_BOTS.bot5.port} (${FT_BOTS.bot5.username})`,
+    bot6: `${FT_BOTS.bot6.host}:${FT_BOTS.bot6.port} (${FT_BOTS.bot6.username})`
 });
 
 const FT_API_HOST = FT_BOTS.bot1.host;
@@ -199,15 +209,15 @@ function saveCustomStopLosses() {
 
 const STRATEGY_DEFAULTS = {
     bot1: {
-        name: 'HighFrequencySweepApex5m',
-        slRatio: 0.975,
-        slPct: '-2.5%',
-        slValue: -0.025,
+        name: 'TournamentSpeedSniper5m',
+        slRatio: 0.978,
+        slPct: '-2.2%',
+        slValue: -0.022,
         trailingStop: false,
         trailingOffsetPct: null,
         trailingPct: null,
-        initialTpRatio: 1.028,
-        initialTpPct: '+2.8%'
+        initialTpRatio: 1.032,
+        initialTpPct: '+3.2%'
     },
     bot2: {
         name: 'LiquiditySweepPro15m',
@@ -252,14 +262,26 @@ const STRATEGY_DEFAULTS = {
         trailingPct: '+1.2%',
         initialTpRatio: 1.080,
         initialTpPct: '+8.0%'
+    },
+    bot6: {
+        name: 'FastScalpElite2h5m',
+        slRatio: 0.975,
+        slPct: '-2.5%',
+        slValue: -0.025,
+        trailingStop: false,
+        trailingOffsetPct: null,
+        trailingPct: null,
+        initialTpRatio: 1.034,
+        initialTpPct: '+3.4%'
     }
 };
 
 const STRATEGY_ROI_TABLES = {
-    bot1: [ // HighFrequencySweepApex5m (5m): {"0": 0.028, "180": 0.013, "360": 0.006}
+    bot1: [ // TournamentSpeedSniper5m (5m): {"0": 0.032, "120": 0.020, "240": 0.012, "360": 0.006}
         { min: 360, roi: 0.006 },
-        { min: 180, roi: 0.013 },
-        { min: 0,   roi: 0.028 }
+        { min: 240, roi: 0.012 },
+        { min: 120, roi: 0.020 },
+        { min: 0,   roi: 0.032 }
     ],
     bot2: [ // LiquiditySweepPro15m (15m): {"0": 0.034, "90": 0.025, "180": 0.016, "360": 0.008}
         { min: 360, roi: 0.008 },
@@ -283,6 +305,12 @@ const STRATEGY_ROI_TABLES = {
         { min: 180, roi: 0.025 },
         { min: 60,  roi: 0.045 },
         { min: 0,   roi: 0.080 }
+    ],
+    bot6: [ // FastScalpElite2h5m (5m): {"0": 0.034, "60": 0.024, "120": 0.016, "180": 0.009}
+        { min: 180, roi: 0.009 },
+        { min: 120, roi: 0.016 },
+        { min: 60,  roi: 0.024 },
+        { min: 0,   roi: 0.034 }
     ]
 };
 
@@ -453,12 +481,13 @@ function callFreqtradeApi(endpoint, method = 'GET', body = null, botKey = 'bot1'
 // Generate full daily morning digest across all 5 bots
 async function generateDailyDigest() {
     try {
-        const [p1, p2, p3, p4, p5, balance, s1, s2, s3, s4, s5, fng, btcTicker] = await Promise.all([
+        const [p1, p2, p3, p4, p5, p6, balance, s1, s2, s3, s4, s5, s6, fng, btcTicker] = await Promise.all([
             callFreqtradeApi('/profit', 'GET', null, 'bot1').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot2').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot3').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot4').catch(() => ({})),
             callFreqtradeApi('/profit', 'GET', null, 'bot5').catch(() => ({})),
+            callFreqtradeApi('/profit', 'GET', null, 'bot6').catch(() => ({})),
             callFreqtradeApi('/balance', 'GET', null, 'bot1').catch(async () => {
                 return await callFreqtradeApi('/balance', 'GET', null, 'bot2').catch(() => ({}));
             }),
@@ -467,6 +496,7 @@ async function generateDailyDigest() {
             callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => ([])),
             callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => ([])),
             callFreqtradeApi('/status', 'GET', null, 'bot5').catch(() => ([])),
+            callFreqtradeApi('/status', 'GET', null, 'bot6').catch(() => ([])),
             fetchHttpsJson('https://api.alternative.me/fng/?limit=1').catch(() => null),
             fetchHttpsJson('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT').catch(() => null)
         ]);
@@ -479,11 +509,12 @@ async function generateDailyDigest() {
             (p2.profit_closed_coin || 0) +
             (p3.profit_closed_coin || 0) +
             (p4.profit_closed_coin || 0) +
-            (p5.profit_closed_coin || 0)
+            (p5.profit_closed_coin || 0) +
+            (p6.profit_closed_coin || 0)
         ).toFixed(2);
 
-        const totalWins = (p1.winning_trades || 0) + (p2.winning_trades || 0) + (p3.winning_trades || 0) + (p4.winning_trades || 0) + (p5.winning_trades || 0);
-        const totalLosses = (p1.losing_trades || 0) + (p2.losing_trades || 0) + (p3.losing_trades || 0) + (p4.losing_trades || 0) + (p5.losing_trades || 0);
+        const totalWins = (p1.winning_trades || 0) + (p2.winning_trades || 0) + (p3.winning_trades || 0) + (p4.winning_trades || 0) + (p5.winning_trades || 0) + (p6.winning_trades || 0);
+        const totalLosses = (p1.losing_trades || 0) + (p2.losing_trades || 0) + (p3.losing_trades || 0) + (p4.losing_trades || 0) + (p5.losing_trades || 0) + (p6.losing_trades || 0);
         const totalClosed = totalWins + totalLosses;
         const winRate = totalClosed > 0 ? ((totalWins / totalClosed) * 100).toFixed(1) : '100.0';
 
@@ -491,21 +522,23 @@ async function generateDailyDigest() {
                           (Array.isArray(s2) ? s2.length : 0) +
                           (Array.isArray(s3) ? s3.length : 0) +
                           (Array.isArray(s4) ? s4.length : 0) +
-                          (Array.isArray(s5) ? s5.length : 0);
+                          (Array.isArray(s5) ? s5.length : 0) +
+                          (Array.isArray(s6) ? s6.length : 0);
 
         const fngVal = fng?.data?.[0]?.value || 'N/A';
         const fngClass = fng?.data?.[0]?.value_classification || 'Neutral';
         const btcPrice = btcTicker?.lastPrice ? parseFloat(btcTicker.lastPrice).toLocaleString('en-US', {maximumFractionDigits: 0}) : 'N/A';
         const btcChange = btcTicker?.priceChangePercent ? parseFloat(btcTicker.priceChangePercent).toFixed(2) : '0.00';
 
-        return `🌅 *DAILY TRADING DIGEST (5-BOT PORTFOLIO)*\n` +
+        return `🌅 *DAILY TRADING DIGEST (6-BOT PORTFOLIO)*\n` +
                `────────────────────\n` +
                `💰 *Total Closed PnL:* ${totalProfitUSDT >= 0 ? '+' : ''}${totalProfitUSDT} USDT\n` +
-               `   • TTM Squeeze (P5): ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • FVG Reclaim (P4): ${(p4.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Sweep Pro (P3): ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Squeeze Elite (P2): ${(p5.profit_closed_coin || 0).toFixed(2)} USDT\n` +
-               `   • Apex Sweep (P1): ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • FVG Reclaim (P6): ${(p4.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Squeeze Elite (P5): ${(p5.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Sweep Pro (P4): ${(p2.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Tournament Sniper (P3): ${(p1.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • TTM Squeeze (P2): ${(p3.profit_closed_coin || 0).toFixed(2)} USDT\n` +
+               `   • Fast Scalp 2h (P1): ${(p6.profit_closed_coin || 0).toFixed(2)} USDT\n` +
                `🏆 *Win Rate:* ${winRate}% (${totalWins}W / ${totalLosses}L)\n` +
                `⚖️ *Portfolio Equity:* ${totalEquity} USDT (${pkrVal} PKR)\n` +
                `📊 *Active Trades:* ${openCount} open\n` +
@@ -513,7 +546,7 @@ async function generateDailyDigest() {
                `🎭 *Market Sentiment:* ${fngVal} (${fngClass})\n` +
                `⏰ *Report Time:* ${toKarachiTime(new Date())}\n` +
                `────────────────────\n` +
-               `_TTM (P5) > FVG (P4) > Sweep Pro (P3) > Squeeze Elite (P2) > Apex (P1) active!_ 🚀`;
+               `_FVG (P6) > Squeeze Elite (P5) > Sweep Pro (P4) > Tournament (P3) > TTM (P2) > Fast Scalp (P1) active!_ 🚀`;
     } catch (e) {
         return `⚠️ Could not compile daily digest: ${e.message}`;
     }
@@ -597,12 +630,13 @@ async function checkTradeMilestones() {
     if (!TARGET_JID || !sock || !isConnected) return;
 
     try {
-        const [open1, open2, open3, open4, open5] = await Promise.all([
+        const [open1, open2, open3, open4, open5, open6] = await Promise.all([
             callFreqtradeApi('/status', 'GET', null, 'bot1').catch(() => []),
             callFreqtradeApi('/status', 'GET', null, 'bot2').catch(() => []),
             callFreqtradeApi('/status', 'GET', null, 'bot3').catch(() => []),
             callFreqtradeApi('/status', 'GET', null, 'bot4').catch(() => []),
-            callFreqtradeApi('/status', 'GET', null, 'bot5').catch(() => [])
+            callFreqtradeApi('/status', 'GET', null, 'bot5').catch(() => []),
+            callFreqtradeApi('/status', 'GET', null, 'bot6').catch(() => [])
         ]);
 
         const tagged1 = (Array.isArray(open1) ? open1 : []).map(t => ({ ...t, botKey: 'bot1', botTag: FT_BOTS.bot1.tag }));
@@ -610,7 +644,8 @@ async function checkTradeMilestones() {
         const tagged3 = (Array.isArray(open3) ? open3 : []).map(t => ({ ...t, botKey: 'bot3', botTag: FT_BOTS.bot3.tag }));
         const tagged4 = (Array.isArray(open4) ? open4 : []).map(t => ({ ...t, botKey: 'bot4', botTag: FT_BOTS.bot4.tag }));
         const tagged5 = (Array.isArray(open5) ? open5 : []).map(t => ({ ...t, botKey: 'bot5', botTag: FT_BOTS.bot5.tag }));
-        const openTrades = [...tagged1, ...tagged2, ...tagged3, ...tagged4, ...tagged5];
+        const tagged6 = (Array.isArray(open6) ? open6 : []).map(t => ({ ...t, botKey: 'bot6', botTag: FT_BOTS.bot6.tag }));
+        const openTrades = [...tagged1, ...tagged2, ...tagged3, ...tagged4, ...tagged5, ...tagged6];
 
         if (openTrades.length === 0) return;
 
@@ -828,14 +863,14 @@ async function handleWhatsAppCommand(commandText, senderJid) {
 
     try {
         if (cmd === '/help' || cmd === 'help' || cmd === '/menu') {
-            return `🤖 *5-BOT COMMAND CENTER (5-BOT PORTFOLIO)*\n` +
+            return `🤖 *6-BOT COMMAND CENTER (6-BOT PORTFOLIO)*\n` +
                    `────────────────────\n` +
-                    `📊 */status* - Active open trades across all 5 bots\n` +
-                   `   • */status 1* (Apex) | */status 2* (Sweep Pro) | */status 3* (TTM) | */status 4* (FVG) | */status 5* (Squeeze Elite)\n` +
+                    `📊 */status* - Active open trades across all 6 bots\n` +
+                   `   • */status 1* (Tourney) | */status 2* (Sweep Pro) | */status 3* (TTM) | */status 4* (FVG) | */status 5* (Squeeze) | */status 6* (Fast Scalp)\n` +
                    `📜 */trades [limit]* - Past executed opportunities\n` +
-                   `   • Filter with */trades 1*, */trades 2*, */trades 3*, */trades 4*, or */trades 5*\n` +
-                   `💰 */profit* - Cumulative profit summary across all 5 bots\n` +
-                   `   • */profit 1* | */profit 2* | */profit 3* | */profit 4* | */profit 5* for single bot\n` +
+                   `   • Filter with */trades 1*, */trades 2*, */trades 3*, */trades 4*, */trades 5*, or */trades 6*\n` +
+                   `💰 */profit* - Cumulative profit summary across all 6 bots\n` +
+                   `   • */profit 1* to */profit 6* for single bot\n` +
                    `⚖️ */balance* - Shared Binance wallet balance & PKR equity\n` +
                    `🎯 */opportunities* - Live radar across whitelist pairs\n` +
                    `🔔 */alert [pair] [price]* - Set custom WhatsApp price alert\n` +
@@ -843,21 +878,21 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `🗑️ */clearalerts* - Clear active custom price alerts\n` +
                    `ℹ️ */info* - Live prices, support/resistance & 24h vol\n` +
                    `🌐 */market* - BTC trend, 24h change & Fear & Greed index\n` +
-                   `🛡️ */stoploss [1/2/3/4/5] [id] [pct/price]* - Update stop loss for a trade\n` +
-                   `🎯 */takeprofit [1/2/3/4/5] [id] [pct/price]* - Set custom take profit target\n` +
-                   `🚨 */forcesell [1/2/3/4/5/all] [id]* - Instantly market exit trades\n` +
+                   `🛡️ */stoploss [1-6] [id] [pct/price]* - Update stop loss for a trade\n` +
+                   `🎯 */takeprofit [1-6] [id] [pct/price]* - Set custom take profit target\n` +
+                   `🚨 */forcesell [1-6/all] [id]* - Instantly market exit trades\n` +
                    `📈 */performance* - Performance per trading pair\n` +
-                   `⏱️ */daily* - Daily profit breakdown across all 5 bots\n` +
+                   `⏱️ */daily* - Daily profit breakdown across all 6 bots\n` +
                    `🌅 */digest* - Generate full morning digest\n` +
-                   `🔄 */reload [1/2/3/4/5/all]* - Reload bot configs\n` +
-                   `⏸️ */stop [1/2/3/4/5/all]* - Pause trading (stop buying)\n` +
-                   `▶️ */start [1/2/3/4/5/all]* - Resume trading\n` +
-                   `🛡️ */protection [1/2/3/4/5]* - Circuit breaker & stoploss lockout status\n` +
+                   `🔄 */reload [1-6/all]* - Reload bot configs\n` +
+                   `⏸️ */stop [1-6/all]* - Pause trading (stop buying)\n` +
+                   `▶️ */start [1-6/all]* - Resume trading\n` +
+                   `🛡️ */protection [1-6]* - Circuit breaker & stoploss lockout status\n` +
                    `🔓 */reset_breaker* - Reset global circuit breaker lock immediately\n` +
-                   `🎯 */roi [1/2/3/4/5]* - Full Take Profit / ROI decay table for each bot\n` +
+                   `🎯 */roi [1-6]* - Full Take Profit / ROI decay table for each bot\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Priority Order: TTM (P5) > Squeeze Elite (P4) > FVG (P3) > Sweep Pro (P2) > Apex (P1)_ 🛡️`;
+                   `_Priority Order: FVG (P6) > Squeeze Elite (P5) > Sweep Pro (P4) > Tournament (P3) > TTM (P2) > Fast Scalp (P1)_ 🛡️`;
         }
 
 
@@ -865,12 +900,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5];
-            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6];
+            if (targetArg === '1' || targetArg === 'tourney' || targetArg === 'tournament' || targetArg === 'sniper') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
             if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
             if (targetArg === '5' || targetArg === 'squeeze' || targetArg === 'squeeze_elite' || targetArg === 'sqz') botsToQuery = [FT_BOTS.bot5];
+            if (targetArg === '6' || targetArg === 'scalp' || targetArg === 'fast_scalp' || targetArg === 'fastscalp') botsToQuery = [FT_BOTS.bot6];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -905,7 +941,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             }
 
             if (allTradesCount === 0) {
-                let msg = cbHeader + `📊 *PORTFOLIO STATUS (5 BOTS)*\n────────────────────\n`;
+                let msg = cbHeader + `📊 *PORTFOLIO STATUS (6 BOTS)*\n────────────────────\n`;
                 if (hasErrors) {
                     msg += `⚠️ *Some bots could not be reached:*\n`;
                     results.forEach(({ bot, error }) => {
@@ -922,13 +958,14 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                                `Capital is shielded while the market settles. 🛡️\n\n`;
                     } else {
                         msg += `🟢 No active open trades right now.\n` +
-                               `All 5 bots are scanning for high-probability setups! 🔍\n\n`;
+                               `All 6 bots are scanning for high-probability setups! 🔍\n\n`;
                     }
-                    msg += `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 5 - Top Master)\n` +
-                           `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 4 - Co-Master Runner)\n` +
-                           `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 3 - Imbalance Engine)\n` +
-                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2 - Macro Sweep Reclaim)\n` +
-                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1 - Micro Scalp)`;
+                    msg += `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 6 - Institutional Reclaim Master)\n` +
+                           `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 5 - Profit Powerhouse)\n` +
+                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 4 - Liquidity Harvester)\n` +
+                           `• 🎯 Tournament Sniper (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 3 - 5m Momentum Sniper)\n` +
+                           `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 2 - Breakout Harvester)\n` +
+                           `• ⚡ Fast Scalp Elite (Port ${FT_BOTS.bot6.port}): Scanning 5m (Priority 1 - Rapid Capital Velocity Scalper)`;
                 }
                 return msg.trim();
             }
@@ -1035,30 +1072,33 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let targetBot = 'all';
 
             for (let p of parts.slice(1)) {
-                if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
+                if (p === '1' || p === 'tourney' || p === 'tournament' || p === 'sniper') targetBot = 'bot1';
                 else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
                 else if (p === '3' || p === 'ttm' || p === 'ttm_squeeze' || p === 'compound') targetBot = 'bot3';
                 else if (p === '4' || p === 'fvg' || p === 'filler' || p === 'reclaim') targetBot = 'bot4';
                 else if (p === '5' || p === 'squeeze' || p === 'squeeze_elite' || p === 'sqz') targetBot = 'bot5';
+                else if (p === '6' || p === 'scalp' || p === 'fast_scalp' || p === 'fastscalp') targetBot = 'bot6';
                 else if (!isNaN(parseInt(p))) limit = parseInt(p);
             }
 
             try {
                 let trades = [];
                 if (targetBot === 'all') {
-                    const [t1, t2, t3, t4, t5] = await Promise.all([
+                    const [t1, t2, t3, t4, t5, t6] = await Promise.all([
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot1').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot3').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot4').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot5').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot5').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, 'bot6').catch(() => ({ trades: [] }))
                     ]);
                     const list1 = (t1.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot1.tag }));
                     const list2 = (t2.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot2.tag }));
                     const list3 = (t3.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot3.tag }));
                     const list4 = (t4.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot4.tag }));
                     const list5 = (t5.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot5.tag }));
-                    trades = [...list1, ...list2, ...list3, ...list4, ...list5].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
+                    const list6 = (t6.trades || []).map(t => ({ ...t, botTag: FT_BOTS.bot6.tag }));
+                    trades = [...list1, ...list2, ...list3, ...list4, ...list5, ...list6].sort((a, b) => (b.close_timestamp || 0) - (a.close_timestamp || 0)).slice(0, limit);
                 } else {
                     const tData = await callFreqtradeApi(`/trades?limit=${limit}`, 'GET', null, targetBot).catch(() => ({ trades: [] }));
                     const bObj = FT_BOTS[targetBot];
@@ -1170,12 +1210,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5];
-            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6];
+            if (targetArg === '1' || targetArg === 'tourney' || targetArg === 'tournament' || targetArg === 'sniper') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
             if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
             if (targetArg === '5' || targetArg === 'squeeze' || targetArg === 'squeeze_elite' || targetArg === 'sqz') botsToQuery = [FT_BOTS.bot5];
+            if (targetArg === '6' || targetArg === 'scalp' || targetArg === 'fast_scalp' || targetArg === 'fastscalp') botsToQuery = [FT_BOTS.bot6];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
@@ -1243,7 +1284,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         if (cmd === '/balance' || cmd === 'balance') {
             let data = null;
             let activeBotName = '';
-            for (const bKey of ['bot1', 'bot2', 'bot3', 'bot4', 'bot5']) {
+            for (const bKey of ['bot1', 'bot2', 'bot3', 'bot4', 'bot5', 'bot6']) {
                 try {
                     data = await callFreqtradeApi('/balance', 'GET', null, bKey);
                     if (data && data.currencies) {
@@ -1280,12 +1321,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5];
-            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6];
+            if (targetArg === '1' || targetArg === 'tourney' || targetArg === 'tournament' || targetArg === 'sniper') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
             if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
             if (targetArg === '5' || targetArg === 'squeeze' || targetArg === 'squeeze_elite' || targetArg === 'sqz') botsToQuery = [FT_BOTS.bot5];
+            if (targetArg === '6' || targetArg === 'scalp' || targetArg === 'fast_scalp' || targetArg === 'fastscalp') botsToQuery = [FT_BOTS.bot6];
 
             try {
                 const results = await Promise.all(
@@ -1332,16 +1374,17 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             let targetBot = 'all';
 
             for (const p of parts.slice(1)) {
-                if (p === '1' || p === 'apex' || p === 'sweep') targetBot = 'bot1';
+                if (p === '1' || p === 'tourney' || p === 'tournament' || p === 'sniper') targetBot = 'bot1';
                 else if (p === '2' || p === 'pro' || p === 'sweep_pro' || p === 'sweeppro' || p === 'ignition') targetBot = 'bot2';
                 else if (p === '3' || p === 'ttm' || p === 'ttm_squeeze' || p === 'compound') targetBot = 'bot3';
                 else if (p === '4' || p === 'fvg' || p === 'filler' || p === 'reclaim') targetBot = 'bot4';
                 else if (p === '5' || p === 'squeeze' || p === 'squeeze_elite' || p === 'sqz') targetBot = 'bot5';
+                else if (p === '6' || p === 'scalp' || p === 'fast_scalp' || p === 'fastscalp') targetBot = 'bot6';
                 else if (!isNaN(parseInt(p))) daysLimit = Math.min(Math.max(parseInt(p), 1), 30);
             }
 
             try {
-                // Fetch recent closed trades from all 5 bots to accurately compute exact daily PnL
+                // Fetch recent closed trades from all 6 bots to accurately compute exact daily PnL
                 let tradesPromises = [];
                 if (targetBot === 'all') {
                     tradesPromises = [
@@ -1349,7 +1392,8 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot2').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot3').catch(() => ({ trades: [] })),
                         callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot4').catch(() => ({ trades: [] })),
-                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot5').catch(() => ({ trades: [] }))
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot5').catch(() => ({ trades: [] })),
+                        callFreqtradeApi(`/trades?limit=100`, 'GET', null, 'bot6').catch(() => ({ trades: [] }))
                     ];
                 } else {
                     tradesPromises = [
@@ -1566,7 +1610,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             try {
                 if (targetArg === 'all') {
                     let results = [];
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades)) {
                             for (const trade of openTrades) {
@@ -1595,7 +1639,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 } else {
                     const tradeId = targetArg;
                     let found = false;
-                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5]) {
+                    for (const b of [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6]) {
                         const openTrades = await callFreqtradeApi('/status', 'GET', null, b).catch(() => []);
                         if (Array.isArray(openTrades) && openTrades.some(t => String(t.trade_id) === String(tradeId))) {
 
@@ -1997,12 +2041,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
         }
 
         if (cmd === '/version' || cmd === 'version') {
-            const [v1, v2, v3, v4, v5] = await Promise.all([
+            const [v1, v2, v3, v4, v5, v6] = await Promise.all([
                 callFreqtradeApi('/version', 'GET', null, 'bot1').catch(() => null),
                 callFreqtradeApi('/version', 'GET', null, 'bot2').catch(() => null),
                 callFreqtradeApi('/version', 'GET', null, 'bot3').catch(() => null),
                 callFreqtradeApi('/version', 'GET', null, 'bot4').catch(() => null),
-                callFreqtradeApi('/version', 'GET', null, 'bot5').catch(() => null)
+                callFreqtradeApi('/version', 'GET', null, 'bot5').catch(() => null),
+                callFreqtradeApi('/version', 'GET', null, 'bot6').catch(() => null)
             ]);
 
             // Also read coordinator portfolio state if available
@@ -2024,32 +2069,24 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
             } catch (e) {}
 
-            return `ℹ️ *5-BOT SYSTEM STATUS & FULL ROI CONFIG*\n────────────────────\n` +
-                   `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
-                   `   Strategy: TTMSqueezeBreakoutElite (15m) | P5 (Top Master)\n` +
-                   `   Risk: SL -2.2% | Trailing: +1.6% trigger ➔ +0.2% lock\n` +
+            return `ℹ️ *6-BOT SYSTEM STATUS & FULL ROI CONFIG*\n────────────────────\n` +
+                   `🤖 *Bot 4 (Port ${FT_BOTS.bot4.port}):* ${v4 ? `v${v4.version}` : 'Offline'}\n` +
+                   `   Strategy: FVGReclaimFiller15m (15m) | P6 (Institutional Reclaim Master)\n` +
+                   `   Risk: SL -1.6% | No Trailing\n` +
                    `   📊 Full ROI Table:\n` +
-                   `     • 0m (0h): +3.6% (Top Explosive Impulse)\n` +
-                   `     • 60m (1h): +2.4% (1-Hour Target)\n` +
-                   `     • 180m (3h): +1.4% (Consolidation Target)\n` +
-                   `     • 360m (6h+): +0.8% (Rotation Floor)\n\n` +
+                   `     • 0m (0h): +2.5% (Optimal Retest Target)\n` +
+                   `     • 180m (3h): +1.5% (Mid-Decay Target)\n` +
+                   `     • 360m (6h+): +0.6% (Turnover Floor)\n\n` +
                    `🤖 *Bot 5 (Port ${FT_BOTS.bot5.port}):* ${v5 ? `v${v5.version}` : 'Offline'}\n` +
-                   `   Strategy: VolatilitySqueezeBreakoutElite15m (15m) | P4 (Co-Master Squeeze Runner)\n` +
+                   `   Strategy: VolatilitySqueezeBreakoutElite15m (15m) | P5 (Profit Powerhouse)\n` +
                    `   Risk: SL -2.8% | Trailing: +4.0% trigger ➔ +1.2% lock\n` +
                    `   📊 Full ROI Table:\n` +
                    `     • 0m (0h): +8.0% (Max Squeeze Expansion Runner)\n` +
                    `     • 60m (1h): +4.5% (1-Hour Momentum Target)\n` +
                    `     • 180m (3h): +2.5% (3-Hour Consolidation)\n` +
                    `     • 360m (6h+): +1.2% (Capital Rotation Floor)\n\n` +
-                   `🤖 *Bot 4 (Port ${FT_BOTS.bot4.port}):* ${v4 ? `v${v4.version}` : 'Offline'}\n` +
-                   `   Strategy: FVGReclaimFiller15m (15m) | P3 (Imbalance Engine)\n` +
-                   `   Risk: SL -1.6% | No Trailing\n` +
-                   `   📊 Full ROI Table:\n` +
-                   `     • 0m (0h): +2.5% (Optimal Retest Target)\n` +
-                   `     • 180m (3h): +1.5% (Mid-Decay Target)\n` +
-                   `     • 360m (6h+): +0.6% (Turnover Floor)\n\n` +
                    `🤖 *Bot 2 (Port ${FT_BOTS.bot2.port}):* ${v2 ? `v${v2.version}` : 'Offline'}\n` +
-                   `   Strategy: LiquiditySweepPro15m (15m) | P2 (Macro Sweep Reclaim)\n` +
+                   `   Strategy: LiquiditySweepPro15m (15m) | P4 (Liquidity Harvester)\n` +
                    `   Risk: SL -2.0% | Trailing: +2.4% trigger ➔ +1.0% lock\n` +
                    `   📊 Full ROI Table:\n` +
                    `     • 0m (0h): +3.4% (Deep Wick Impulse)\n` +
@@ -2057,12 +2094,29 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `     • 180m (3h): +1.6% (3-Hour Decay Target)\n` +
                    `     • 360m (6h+): +0.8% (Rotation Floor)\n\n` +
                    `🤖 *Bot 1 (Port ${FT_BOTS.bot1.port}):* ${v1 ? `v${v1.version}` : 'Offline'}\n` +
-                   `   Strategy: HighFrequencySweepApex5m (5m) | P1 (Micro Scalp)\n` +
-                   `   Risk: SL -2.5% | No Trailing\n` +
+                   `   Strategy: TournamentSpeedSniper5m (5m) | P3 (5m Momentum Sniper)\n` +
+                   `   Risk: SL -2.2% | No Trailing (Ratchet @ +1.8% -> +0.2%)\n` +
                    `   📊 Full ROI Table:\n` +
-                   `     • 0m (0h): +2.8% (Instant Wick Scalp)\n` +
-                   `     • 180m (3h): +1.3% (3-Hour Mid Target)\n` +
-                   `     • 360m (6h+): +0.6% (Quick Capital Turn)\n\n` +
+                   `     • 0m (0h): +3.2% (Apex Momentum Scalp)\n` +
+                   `     • 120m (2h): +2.0% (2-Hour Momentum Target)\n` +
+                   `     • 240m (4h): +1.2% (Decay Target)\n` +
+                   `     • 360m (6h+): +0.6% (Turnover Floor)\n\n` +
+                   `🤖 *Bot 3 (Port ${FT_BOTS.bot3.port}):* ${v3 ? `v${v3.version}` : 'Offline'}\n` +
+                   `   Strategy: TTMSqueezeBreakoutElite (15m) | P2 (Breakout Harvester)\n` +
+                   `   Risk: SL -2.2% | Trailing: +1.6% trigger ➔ +0.2% lock\n` +
+                   `   📊 Full ROI Table:\n` +
+                   `     • 0m (0h): +3.6% (Top Explosive Impulse)\n` +
+                   `     • 60m (1h): +2.4% (1-Hour Target)\n` +
+                   `     • 180m (3h): +1.4% (Consolidation Target)\n` +
+                   `     • 360m (6h+): +0.8% (Rotation Floor)\n\n` +
+                   `🤖 *Bot 6 (Port ${FT_BOTS.bot6.port}):* ${v6 ? `v${v6.version}` : 'Offline'}\n` +
+                   `   Strategy: FastScalpElite2h5m (5m) | P1 (Rapid Capital Velocity Scalper)\n` +
+                   `   Risk: SL -2.5% | No Trailing (Ratchet @ +1.0% -> +0.2%)\n` +
+                   `   📊 Full ROI Table:\n` +
+                   `     • 0m (0h): +3.4% (Instant Runner Capture)\n` +
+                   `     • 60m (1h): +2.4% (Early Expansion)\n` +
+                   `     • 120m (2h): +1.6% (2-Hour Target)\n` +
+                   `     • 180m (3h+): +0.9% (3-Hour Cutoff Target)\n\n` +
                    `⚡ *Coordinator State:* ${stateInfo}`;
         }
 
@@ -2071,24 +2125,10 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const targetArg = parts[1]?.toLowerCase();
 
             const roiData = {
-                bot3: {
-                    label: '🎯 TTM Squeeze Elite (Bot 3 - 15m)',
-                    port: FT_BOTS.bot3.port,
-                    priority: 'Priority 5 (Top Master)',
-                    strategy: 'TTMSqueezeBreakoutElite',
-                    stoploss: '-2.2%',
-                    trailing: 'Offset +1.6% ➔ Trail +0.2%',
-                    steps: [
-                        { time: '0 min (0h)', target: '+3.6%', desc: 'Top Explosive Impulse' },
-                        { time: '60 min (1h)', target: '+2.4%', desc: '1-Hour Target' },
-                        { time: '180 min (3h)', target: '+1.4%', desc: '3-Hour Consolidation' },
-                        { time: '360 min (6h+)', target: '+0.8%', desc: 'Capital Rotation Floor' }
-                    ]
-                },
                 bot4: {
                     label: '📐 FVG Reclaim Filler (Bot 4 - 15m)',
                     port: FT_BOTS.bot4.port,
-                    priority: 'Priority 3 (Imbalance Engine)',
+                    priority: 'Priority 6 (Institutional Reclaim Master)',
                     strategy: 'FVGReclaimFiller15m',
                     stoploss: '-1.6%',
                     trailing: 'None (Decaying Profit Cap)',
@@ -2098,24 +2138,10 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                         { time: '360 min (6h+)', target: '+0.6%', desc: 'Turnover Floor' }
                     ]
                 },
-                bot2: {
-                    label: '🌊 Sweep Pro (Bot 2 - 15m)',
-                    port: FT_BOTS.bot2.port,
-                    priority: 'Priority 2 (Macro Sweep Reclaim)',
-                    strategy: 'LiquiditySweepPro15m',
-                    stoploss: '-2.0%',
-                    trailing: 'Offset +2.4% ➔ Trail +1.0%',
-                    steps: [
-                        { time: '0 min (0h)', target: '+3.4%', desc: 'Deep Wick Impulse' },
-                        { time: '90 min (1.5h)', target: '+2.5%', desc: '1.5-Hour Runner Target' },
-                        { time: '180 min (3h)', target: '+1.6%', desc: '3-Hour Decay' },
-                        { time: '360 min (6h+)', target: '+0.8%', desc: 'Rotation Floor' }
-                    ]
-                },
                 bot5: {
                     label: '💥 Squeeze Elite (Bot 5 - 15m)',
                     port: FT_BOTS.bot5.port,
-                    priority: 'Priority 4 (Co-Master Squeeze Runner)',
+                    priority: 'Priority 5 (Profit Powerhouse)',
                     strategy: 'VolatilitySqueezeBreakoutElite15m',
                     stoploss: '-2.8%',
                     trailing: 'Offset +4.0% ➔ Trail +1.2%',
@@ -2126,29 +2152,73 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                         { time: '360 min (6h+)', target: '+1.2%', desc: 'Turnover Floor' }
                     ]
                 },
-                bot1: {
-                    label: '⚡ Apex Sweep (Bot 1 - 5m)',
-                    port: FT_BOTS.bot1.port,
-                    priority: 'Priority 1 (Micro Sweep Scalper)',
-                    strategy: 'HighFrequencySweepApex5m',
-                    stoploss: '-2.5%',
-                    trailing: 'None (Fixed Soft Floor)',
+                bot2: {
+                    label: '🌊 Sweep Pro (Bot 2 - 15m)',
+                    port: FT_BOTS.bot2.port,
+                    priority: 'Priority 4 (Liquidity Harvester)',
+                    strategy: 'LiquiditySweepPro15m',
+                    stoploss: '-2.0%',
+                    trailing: 'Offset +2.4% ➔ Trail +1.0%',
                     steps: [
-                        { time: '0 min (0h)', target: '+2.8%', desc: 'Instant Wick Scalp' },
-                        { time: '180 min (3h)', target: '+1.3%', desc: '3-Hour Mid Target' },
-                        { time: '360 min (6h+)', target: '+0.6%', desc: 'Quick Capital Turn' }
+                        { time: '0 min (0h)', target: '+3.4%', desc: 'Deep Wick Impulse' },
+                        { time: '90 min (1.5h)', target: '+2.5%', desc: '1.5-Hour Runner Target' },
+                        { time: '180 min (3h)', target: '+1.6%', desc: '3-Hour Decay' },
+                        { time: '360 min (6h+)', target: '+0.8%', desc: 'Rotation Floor' }
+                    ]
+                },
+                bot1: {
+                    label: '🎯 Tournament Sniper (Bot 1 - 5m)',
+                    port: FT_BOTS.bot1.port,
+                    priority: 'Priority 3 (5m Momentum Sniper)',
+                    strategy: 'TournamentSpeedSniper5m',
+                    stoploss: '-2.2%',
+                    trailing: 'None (Ratchet @ +1.8% -> +0.2%)',
+                    steps: [
+                        { time: '0 min (0h)', target: '+3.2%', desc: 'Apex Momentum Scalp' },
+                        { time: '120 min (2h)', target: '+2.0%', desc: '2-Hour Momentum Target' },
+                        { time: '240 min (4h)', target: '+1.2%', desc: 'Decay Target' },
+                        { time: '360 min (6h+)', target: '+0.6%', desc: 'Turnover Floor' }
+                    ]
+                },
+                bot3: {
+                    label: '🎯 TTM Squeeze Elite (Bot 3 - 15m)',
+                    port: FT_BOTS.bot3.port,
+                    priority: 'Priority 2 (Breakout Harvester)',
+                    strategy: 'TTMSqueezeBreakoutElite',
+                    stoploss: '-2.2%',
+                    trailing: 'Offset +1.6% ➔ Trail +0.2%',
+                    steps: [
+                        { time: '0 min (0h)', target: '+3.6%', desc: 'Top Explosive Impulse' },
+                        { time: '60 min (1h)', target: '+2.4%', desc: '1-Hour Target' },
+                        { time: '180 min (3h)', target: '+1.4%', desc: '3-Hour Consolidation' },
+                        { time: '360 min (6h+)', target: '+0.8%', desc: 'Capital Rotation Floor' }
+                    ]
+                },
+                bot6: {
+                    label: '⚡ Fast Scalp Elite (Bot 6 - 5m)',
+                    port: FT_BOTS.bot6.port,
+                    priority: 'Priority 1 (Rapid Capital Velocity Scalper)',
+                    strategy: 'FastScalpElite2h5m',
+                    stoploss: '-2.5%',
+                    trailing: 'None (Ratchet @ +1.0% -> +0.2%)',
+                    steps: [
+                        { time: '0 min (0h)', target: '+3.4%', desc: 'Instant Runner Capture' },
+                        { time: '60 min (1h)', target: '+2.4%', desc: 'Early Expansion' },
+                        { time: '120 min (2h)', target: '+1.6%', desc: '2-Hour Target' },
+                        { time: '180 min (3h+)', target: '+0.9%', desc: '3-Hour Cutoff Target' }
                     ]
                 }
             };
 
-            let selectedBots = ['bot3', 'bot5', 'bot4', 'bot2', 'bot1'];
-            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') selectedBots = ['bot1'];
+            let selectedBots = ['bot4', 'bot5', 'bot2', 'bot1', 'bot3', 'bot6'];
+            if (targetArg === '1' || targetArg === 'tourney' || targetArg === 'tournament' || targetArg === 'sniper') selectedBots = ['bot1'];
             else if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'sweeppro') selectedBots = ['bot2'];
             else if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') selectedBots = ['bot3'];
             else if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'filler' || targetArg === 'reclaim') selectedBots = ['bot4'];
             else if (targetArg === '5' || targetArg === 'squeeze' || targetArg === 'squeeze_elite' || targetArg === 'sqz') selectedBots = ['bot5'];
+            else if (targetArg === '6' || targetArg === 'scalp' || targetArg === 'fast_scalp' || targetArg === 'fastscalp') selectedBots = ['bot6'];
 
-            let msg = `🎯 *5-BOT MINIMAL ROI (TAKE PROFIT) TABLES*\n────────────────────\n`;
+            let msg = `🎯 *6-BOT MINIMAL ROI (TAKE PROFIT) TABLES*\n────────────────────\n`;
             selectedBots.forEach(k => {
                 const b = roiData[k];
                 msg += `🤖 *${b.label}* (Port ${b.port})\n` +
@@ -2168,12 +2238,13 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const parts = commandText.trim().split(/\s+/);
             const targetArg = parts[1]?.toLowerCase();
 
-            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5];
-            if (targetArg === '1' || targetArg === 'apex' || targetArg === 'sweep') botsToQuery = [FT_BOTS.bot1];
+            let botsToQuery = [FT_BOTS.bot1, FT_BOTS.bot2, FT_BOTS.bot3, FT_BOTS.bot4, FT_BOTS.bot5, FT_BOTS.bot6];
+            if (targetArg === '1' || targetArg === 'tourney' || targetArg === 'tournament' || targetArg === 'sniper') botsToQuery = [FT_BOTS.bot1];
             if (targetArg === '2' || targetArg === 'pro' || targetArg === 'sweep_pro' || targetArg === 'ignition') botsToQuery = [FT_BOTS.bot2];
             if (targetArg === '3' || targetArg === 'ttm' || targetArg === 'ttm_squeeze' || targetArg === 'compound') botsToQuery = [FT_BOTS.bot3];
             if (targetArg === '4' || targetArg === 'fvg' || targetArg === 'reclaim') botsToQuery = [FT_BOTS.bot4];
             if (targetArg === '5' || targetArg === 'squeeze' || targetArg === 'squeeze_elite' || targetArg === 'sqz') botsToQuery = [FT_BOTS.bot5];
+            if (targetArg === '6' || targetArg === 'scalp' || targetArg === 'fast_scalp' || targetArg === 'fastscalp') botsToQuery = [FT_BOTS.bot6];
 
             const results = await Promise.all(
                 botsToQuery.map(async (b) => {
