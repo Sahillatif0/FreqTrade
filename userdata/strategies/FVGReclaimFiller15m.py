@@ -157,8 +157,9 @@ class FVGReclaimFiller15m(IStrategy):
 
         if pc:
             try:
-                if not pc.can_enter("FVGReclaimFiller15m", pair):
-                    logger.info(f"[FVGReclaimFiller15m] Entry blocked by Portfolio Coordinator for {pair}")
+                allowed, reason = pc.can_enter("FVGReclaimFiller15m", pair)
+                if not allowed:
+                    logger.info(f"[FVGReclaimFiller15m] Entry blocked by Portfolio Coordinator for {pair}: {reason}")
                     return False
                 pc.confirm_entry("FVGReclaimFiller15m", pair)
             except Exception as e:
@@ -168,9 +169,13 @@ class FVGReclaimFiller15m(IStrategy):
     def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
+        if self.dp and self.dp.runmode.value in ('backtest', 'hyperopt'):
+            return True
+
         if pc:
             try:
-                pc.confirm_exit("FVGReclaimFiller15m", pair)
+                profit_ratio = (rate - trade.open_rate) / trade.open_rate if (trade and trade.open_rate) else None
+                pc.confirm_exit("FVGReclaimFiller15m", pair, profit_ratio=profit_ratio, exit_reason=exit_reason)
             except Exception as e:
                 logger.warning(f"[FVGReclaimFiller15m] Coordinator error: {e}")
         return True

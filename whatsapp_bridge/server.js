@@ -771,6 +771,56 @@ async function checkTradeMilestones() {
     }
 }
 
+// Helper to read shared Portfolio Coordinator state
+function getPortfolioState() {
+    const candidatePaths = [
+        path.join(__dirname, '..', 'userdata', 'portfolio_state.json'),
+        path.join(__dirname, '..', 'user_data', 'portfolio_state.json'),
+        path.join(__dirname, '..', 'portfolio_state.json')
+    ];
+    for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+            try {
+                return { path: p, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
+            } catch (e) {
+                console.warn(`[getPortfolioState] Parse error in ${p}: ${e.message}`);
+            }
+        }
+    }
+    return null;
+}
+
+// Helper to manually reset Portfolio Circuit Breaker
+function resetCircuitBreaker() {
+    const candidatePaths = [
+        path.join(__dirname, '..', 'userdata', 'portfolio_state.json'),
+        path.join(__dirname, '..', 'user_data', 'portfolio_state.json'),
+        path.join(__dirname, '..', 'portfolio_state.json')
+    ];
+    let resetAny = false;
+    for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+                data.circuit_breaker = {
+                    is_locked: false,
+                    tier: 'NORMAL',
+                    lock_reason: null,
+                    locked_until: 0,
+                    lock_started_at: 0
+                };
+                data.recent_losses = [];
+                data.last_update = Date.now() / 1000;
+                fs.writeFileSync(p, JSON.stringify(data, null, 2));
+                resetAny = true;
+            } catch (e) {
+                console.warn(`[resetCircuitBreaker] Error updating ${p}: ${e.message}`);
+            }
+        }
+    }
+    return resetAny;
+}
+
 // Format command responses for WhatsApp
 async function handleWhatsAppCommand(commandText, senderJid) {
     const cmd = commandText.trim().toLowerCase();
@@ -803,10 +853,11 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                    `⏸️ */stop [1/2/3/4/5/all]* - Pause trading (stop buying)\n` +
                    `▶️ */start [1/2/3/4/5/all]* - Resume trading\n` +
                    `🛡️ */protection [1/2/3/4/5]* - Circuit breaker & stoploss lockout status\n` +
+                   `🔓 */reset_breaker* - Reset global circuit breaker lock immediately\n` +
                    `🎯 */roi [1/2/3/4/5]* - Full Take Profit / ROI decay table for each bot\n` +
                    `ℹ️ */version* - Strategy, bot & preemption status\n` +
                    `────────────────────\n` +
-                   `_Priority Order: TTM (P5) > FVG (P4) > Sweep Pro (P3) > Squeeze Elite (P2) > Apex (P1)_ 🛡️`;
+                   `_Priority Order: TTM (P5) > Squeeze Elite (P4) > FVG (P3) > Sweep Pro (P2) > Apex (P1)_ 🛡️`;
         }
 
 
@@ -835,8 +886,26 @@ async function handleWhatsAppCommand(commandText, senderJid) {
             const allTradesCount = results.reduce((acc, r) => acc + r.trades.length, 0);
             const hasErrors = results.some(r => r.error !== null);
 
+            const stateRes = getPortfolioState();
+            let cbHeader = '';
+            let isCbLocked = false;
+            if (stateRes && stateRes.data) {
+                const cb = stateRes.data.circuit_breaker || {};
+                const nowSec = Date.now() / 1000;
+                if (cb.is_locked && cb.locked_until > nowSec) {
+                    isCbLocked = true;
+                    const remHours = ((cb.locked_until - nowSec) / 3600).toFixed(1);
+                    const unlockTime = toKarachiTime(new Date(cb.locked_until * 1000));
+                    cbHeader = `🚨 *PORTFOLIO CIRCUIT BREAKER ACTIVE* 🚨\n` +
+                               `🔒 *Trading Frozen:* ${remHours}h remaining (Unlocks: ${unlockTime})\n` +
+                               `⚠️ *Reason:* ${cb.lock_reason || 'Consecutive loss streak'}\n` +
+                               `💡 _Send */reset_breaker* to resume immediately_\n` +
+                               `────────────────────\n\n`;
+                }
+            }
+
             if (allTradesCount === 0) {
-                let msg = `📊 *PORTFOLIO STATUS (5 BOTS)*\n────────────────────\n`;
+                let msg = cbHeader + `📊 *PORTFOLIO STATUS (5 BOTS)*\n────────────────────\n`;
                 if (hasErrors) {
                     msg += `⚠️ *Some bots could not be reached:*\n`;
                     results.forEach(({ bot, error }) => {
@@ -848,18 +917,23 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                     });
                     msg += `\n_Check if bots are running or verify passwords in configs._`;
                 } else {
-                    msg += `🟢 No active open trades right now.\n` +
-                           `All 5 bots are scanning for high-probability setups! 🔍\n\n` +
-                            `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 5 - Top Master)\n` +
-                            `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 4 - Co-Master Runner)\n` +
-                            `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 3 - Imbalance Engine)\n` +
-                            `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2 - Macro Sweep Reclaim)\n` +
-                            `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1 - Micro Scalp)`;
+                    if (isCbLocked) {
+                        msg += `🔒 *All new entries are currently blocked by Global Circuit Breaker!*\n` +
+                               `Capital is shielded while the market settles. 🛡️\n\n`;
+                    } else {
+                        msg += `🟢 No active open trades right now.\n` +
+                               `All 5 bots are scanning for high-probability setups! 🔍\n\n`;
+                    }
+                    msg += `• 🎯 TTM Squeeze Elite (Port ${FT_BOTS.bot3.port}): Scanning 15m (Priority 5 - Top Master)\n` +
+                           `• 💥 Squeeze Elite (Port ${FT_BOTS.bot5.port}): Scanning 15m (Priority 4 - Co-Master Runner)\n` +
+                           `• 📐 FVG Reclaim Filler (Port ${FT_BOTS.bot4.port}): Scanning 15m (Priority 3 - Imbalance Engine)\n` +
+                           `• 🌊 Sweep Pro (Port ${FT_BOTS.bot2.port}): Scanning 15m (Priority 2 - Macro Sweep Reclaim)\n` +
+                           `• ⚡ Apex Sweep (Port ${FT_BOTS.bot1.port}): Scanning 5m (Priority 1 - Micro Scalp)`;
                 }
                 return msg.trim();
             }
 
-            let msg = `📊 *ACTIVE OPEN TRADES (${allTradesCount})*\n────────────────────\n`;
+            let msg = cbHeader + `📊 *ACTIVE OPEN TRADES (${allTradesCount})*\n────────────────────\n`;
 
             results.forEach(({ bot, trades, error }) => {
                 if (error) {
@@ -2113,7 +2187,35 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 })
             );
 
-            let msg = `🛡️ *CIRCUIT BREAKER & PROTECTION STATUS*\n────────────────────\n`;
+            const stateRes = getPortfolioState();
+            let cbSection = '';
+            if (stateRes && stateRes.data) {
+                const cb = stateRes.data.circuit_breaker || {};
+                const recentLosses = stateRes.data.recent_losses || [];
+                const nowSec = Date.now() / 1000;
+                const isLocked = cb.is_locked && cb.locked_until > nowSec;
+                const losses12h = recentLosses.filter(l => (nowSec - (l.timestamp || 0)) < 43200).length;
+                const losses24h = recentLosses.filter(l => (nowSec - (l.timestamp || 0)) < 86400).length;
+
+                if (isLocked) {
+                    const remainingHours = ((cb.locked_until - nowSec) / 3600).toFixed(1);
+                    const unlockTime = toKarachiTime(new Date(cb.locked_until * 1000));
+                    cbSection = `🌐 *GLOBAL PORTFOLIO CIRCUIT BREAKER:*\n` +
+                                `   🚨 *STATUS: LOCKED (${cb.tier || 'ACTIVE'})*\n` +
+                                `   ⚠️ *Reason:* ${cb.lock_reason || 'Multi-bot loss streak'}\n` +
+                                `   ⏳ *Unlocks At:* ${unlockTime} (${remainingHours}h remaining)\n` +
+                                `   📊 *Losses:* ${losses12h} in 12h | ${losses24h} in 24h\n` +
+                                `   💡 _Send */reset_breaker* to unlock immediately_\n\n`;
+                } else {
+                    cbSection = `🌐 *GLOBAL PORTFOLIO CIRCUIT BREAKER:*\n` +
+                                `   🟢 *Status:* NORMAL (All 5 Bots Active)\n` +
+                                `   📊 *Losses:* ${losses12h} in 12h | ${losses24h} in 24h\n` +
+                                `   🛡️ *Rule 1:* 2 losses in 12h -> 4-hour cooldown\n` +
+                                `   🚨 *Rule 2:* 3+ losses in 24h -> 12-hour emergency freeze\n\n`;
+                }
+            }
+
+            let msg = `🛡️ *CIRCUIT BREAKER & PROTECTION STATUS*\n────────────────────\n` + cbSection;
             let totalLocks = 0;
 
             for (const { bot, locks, error } of results) {
@@ -2124,8 +2226,7 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 }
                 const activeLocks = locks.filter(l => l.active !== false);
                 if (activeLocks.length === 0) {
-                    const ruleDesc = bot.id === 1 ? 'StoplossGuard active (2 losses in 14h -> 12h pause)' : 'Protection Guard Active';
-                    msg += `   🟢 *Status:* Ready (No active locks)\n   🛡️ *Rule:* ${ruleDesc}\n\n`;
+                    msg += `   🟢 *Status:* Ready (No individual locks)\n\n`;
                 } else {
                     totalLocks += activeLocks.length;
                     for (const l of activeLocks) {
@@ -2144,6 +2245,19 @@ async function handleWhatsAppCommand(commandText, senderJid) {
                 msg += `_All bots are actively shielded against multi-loss cascades._`;
             }
             return msg.trim();
+        }
+
+        if (cmd === '/reset_breaker' || cmd === '/unlock' || cmd === '/unlock_breaker' || cmd === 'reset_breaker' || cmd === 'unlock') {
+            const success = resetCircuitBreaker();
+            if (success) {
+                return `🔓 *GLOBAL CIRCUIT BREAKER RESET COMPLETE!*\n` +
+                       `────────────────────\n` +
+                       `✅ Portfolio circuit breaker lock and recent loss counters have been cleared.\n` +
+                       `🟢 All 5 bots are free to enter new trades immediately.\n` +
+                       `⏰ *Time:* ${toKarachiTime(new Date())}`;
+            } else {
+                return `⚠️ *Error resetting circuit breaker:* State file not found or could not be updated.`;
+            }
         }
 
 
@@ -2511,6 +2625,30 @@ app.post('/preemption-alert', async (req, res) => {
                           `🎯 *Requested By:* *${data.incoming_pair || 'Signal'}* [${inStrat}]\n` +
                           `🛡️ *Decision:* Position held to protect capital from premature cut!\n` +
                           `💡 *Safety:* Trade allowed to play out toward bounce/ROI.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (data.event === 'CIRCUIT_BREAKER_TRIGGERED') {
+            const tier = data.tier || 'CIRCUIT_BREAKER';
+            const reason = data.reason || 'Consecutive multi-bot losses detected';
+            let unlockStr = 'N/A';
+            if (data.locked_until) {
+                unlockStr = toKarachiTime(new Date(data.locked_until * 1000));
+            }
+            const pnlStr = data.profit_ratio !== undefined ? `${(data.profit_ratio * 100).toFixed(2)}%` : '';
+            messageText = `🚨 *GLOBAL PORTFOLIO CIRCUIT BREAKER TRIGGERED!*\n` +
+                          `────────────────────\n` +
+                          `🔒 *Lockout Tier:* *${tier}*\n` +
+                          `⚠️ *Trigger Reason:* ${reason}\n` +
+                          `📊 *Recent Losses:* ${data.loss_count_12h || 0} in 12h | ${data.loss_count_24h || 0} in 24h\n` +
+                          `🛑 *Last Trigger:* [${data.strategy || 'Bot'}] ${data.pair || ''} ${pnlStr}\n` +
+                          `⏳ *Trading Frozen Until:* *${unlockStr}*\n` +
+                          `🛡️ *Protection:* All 5 bots entry-blocked to prevent knife-catch cascade!\n` +
+                          `💡 *Manual Override:* Send */reset_breaker* to unlock immediately.\n` +
+                          `⏰ *Time:* ${toKarachiTime(new Date())}`;
+        } else if (data.event === 'CIRCUIT_BREAKER_UNLOCKED') {
+            messageText = `🟢 *PORTFOLIO CIRCUIT BREAKER UNLOCKED!*\n` +
+                          `────────────────────\n` +
+                          `✅ *Status:* Cooldown timer expired. Portfolio trading resumed.\n` +
+                          `🎯 *All 5 bots are actively scanning whitelist pairs again.*\n` +
                           `⏰ *Time:* ${toKarachiTime(new Date())}`;
         } else {
             messageText = `⚡ *PREEMPTION UPDATE*\n────────────────────\n${JSON.stringify(data, null, 2)}`;

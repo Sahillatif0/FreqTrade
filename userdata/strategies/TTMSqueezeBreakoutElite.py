@@ -188,8 +188,15 @@ class TTMSqueezeBreakoutElite(IStrategy):
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, entry_tag: str,
                             side: str, **kwargs) -> bool:
+        if self.dp and self.dp.runmode.value in ('backtest', 'hyperopt'):
+            return True
+
         if pc:
             try:
+                allowed, reason = pc.can_enter("TTMSqueezeBreakoutElite", pair)
+                if not allowed:
+                    logger.warning(f"[TTMSqueeze] Entry blocked by Coordinator: {reason}")
+                    return False
                 pc.confirm_entry("TTMSqueezeBreakoutElite", pair)
             except Exception as e:
                 logger.warning(f"[TTMSqueeze] Confirm entry error: {e}")
@@ -198,9 +205,13 @@ class TTMSqueezeBreakoutElite(IStrategy):
     def confirm_trade_exit(self, pair: str, trade: 'Trade', order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
+        if self.dp and self.dp.runmode.value in ('backtest', 'hyperopt'):
+            return True
+
         if pc:
             try:
-                pc.confirm_exit("TTMSqueezeBreakoutElite", pair)
+                profit_ratio = (rate - trade.open_rate) / trade.open_rate if (trade and trade.open_rate) else None
+                pc.confirm_exit("TTMSqueezeBreakoutElite", pair, profit_ratio=profit_ratio, exit_reason=exit_reason)
             except Exception as e:
                 logger.warning(f"[TTMSqueeze] Confirm exit error: {e}")
         return True
