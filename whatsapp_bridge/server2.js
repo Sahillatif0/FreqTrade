@@ -327,8 +327,8 @@ async function handleCommand(cmd) {
 }
 
 // ==============================================================================
-// 4. FREQTRADE WEBHOOK RECEIVER (POST /trade-alert)
-// ==============================================================================
+const processedAlerts = new Map(); // key: `${type}_${trade_id}`, val: timestamp
+
 app.post('/trade-alert', async (req, res) => {
     try {
         const data = req.body;
@@ -338,12 +338,24 @@ app.post('/trade-alert', async (req, res) => {
             return res.status(200).json({ status: 'queued', warning: 'WhatsApp socket not ready' });
         }
 
+        const tradeId = data.trade_id || `${Date.now()}`;
+        const alertType = (data.type || '').toLowerCase();
+        const dedupeKey = `${alertType.includes('entry') ? 'entry' : 'exit'}_${tradeId}`;
+        const now = Date.now();
+
+        // Prevent duplicate alerts if both entry and entry_fill are received
+        if (processedAlerts.has(dedupeKey) && (now - processedAlerts.get(dedupeKey)) < 60000) {
+            console.log(`[Webhook] Ignored duplicate alert for ${dedupeKey}`);
+            return res.status(200).json({ status: 'duplicate_ignored' });
+        }
+        processedAlerts.set(dedupeKey, now);
+
         let alertMsg = '';
         const pair = data.pair || 'CRYPTO';
         const direction = (data.direction || 'long').toUpperCase();
         const sideIcon = direction === 'SHORT' ? '🔻 SHORT' : '🔼 LONG';
 
-        if (data.type === 'entry') {
+        if (alertType.includes('entry')) {
             const openRate = parseFloat(data.open_rate) || 0;
             const stake = Number(data.stake_amount || 0).toFixed(2);
             const rawTag = data.enter_tag || 'institutional_confluence';
@@ -389,7 +401,7 @@ app.post('/trade-alert', async (req, res) => {
                        `🎯 *Take-Profit 2:* $${tp2Price} (+35% ROE | 2.2 RR)\n` +
                        `⏱️ *Rule Note:* Hold >= 5 mins for judging criteria\n` +
                        `═════════════════════════`;
-        } else if (data.type === 'exit') {
+        } else if (alertType.includes('exit')) {
             const pnlRoe = Number(data.profit_percent || 0).toFixed(2);
             const pnlUsdt = Number(data.profit_amount || 0).toFixed(2);
             const isProfit = Number(pnlUsdt) >= 0;

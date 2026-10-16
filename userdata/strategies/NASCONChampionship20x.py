@@ -64,8 +64,8 @@ class NASCONChampionship20x(IStrategy):
     ignore_roi_if_entry_signal = False
 
     order_types = {
-        "entry": "limit",
-        "exit": "limit",
+        "entry": "market",
+        "exit": "market",
         "stoploss": "market",
         "stoploss_on_exchange": False
     }
