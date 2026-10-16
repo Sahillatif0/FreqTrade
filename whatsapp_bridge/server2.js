@@ -47,8 +47,10 @@ if (fs.existsSync(TARGET_FILE)) {
     TARGET_JID = fs.readFileSync(TARGET_FILE, 'utf8').trim();
 }
 
-// Global WhatsApp Socket Reference
+// Global WhatsApp Socket Reference & Connection State
 let sock = null;
+let isWhatsAppConnected = false;
+const pendingAlertQueue = [];
 
 // ==============================================================================
 // 1. FREQTRADE API CLIENT HELPER
@@ -101,7 +103,15 @@ function callFreqtradeApi(endpoint, method = 'GET', postData = null) {
 // 2. WHATSAPP BOT INITIALIZATION (BAILEYS)
 // ==============================================================================
 async function startWhatsAppBot() {
-    const authDir = process.env.WA_AUTH_DIR || path.join(__dirname, 'auth_info_competition');
+    let authDir = process.env.WA_AUTH_DIR;
+    if (!authDir) {
+        if (fs.existsSync(path.join(__dirname, 'auth_info_baileys', 'creds.json'))) {
+            authDir = path.join(__dirname, 'auth_info_baileys');
+            console.log('[WhatsApp] Auto-detected existing credentials in auth_info_baileys');
+        } else {
+            authDir = path.join(__dirname, 'auth_info_competition');
+        }
+    }
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
     const logger = pino({ level: 'silent' });
@@ -117,7 +127,7 @@ async function startWhatsAppBot() {
         browser: Browsers.macOS('Desktop')
     });
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
             console.log('\n================================================================');
@@ -126,6 +136,7 @@ async function startWhatsAppBot() {
             qrcode.generate(qr, { small: true });
         }
         if (connection === 'close') {
+            isWhatsAppConnected = false;
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             const isLoggedOut = statusCode === DisconnectReason.loggedOut;
             console.log(`[WhatsApp] Connection closed (Status: ${statusCode || 'unknown'}). LoggedOut: ${isLoggedOut}`);
@@ -141,10 +152,25 @@ async function startWhatsAppBot() {
                 setTimeout(startWhatsAppBot, 4000);
             }
         } else if (connection === 'open') {
+            isWhatsAppConnected = true;
             console.log('================================================================');
             console.log('✅ WhatsApp Connected Successfully to NASCON 20x Competition Bridge!');
             console.log(`📱 Alert recipient: ${TARGET_JID || 'Will auto-bind on first message'}`);
             console.log('================================================================');
+
+            // Flush pending queued alerts if any arrived while disconnected
+            if (pendingAlertQueue.length > 0 && TARGET_JID) {
+                console.log(`[WhatsApp] Flushing ${pendingAlertQueue.length} queued alerts...`);
+                while (pendingAlertQueue.length > 0) {
+                    const msg = pendingAlertQueue.shift();
+                    try {
+                        await sock.sendMessage(TARGET_JID, { text: msg });
+                        await new Promise(r => setTimeout(r, 600));
+                    } catch (err) {
+                        console.error('[WhatsApp] Failed to send queued alert:', err.message);
+                    }
+                }
+            }
         }
     });
 
@@ -334,10 +360,6 @@ app.post('/trade-alert', async (req, res) => {
         const data = req.body;
         console.log('[Webhook] Received trade alert:', data);
 
-        if (!sock || !TARGET_JID) {
-            return res.status(200).json({ status: 'queued', warning: 'WhatsApp socket not ready' });
-        }
-
         const tradeId = data.trade_id || `${Date.now()}`;
         const alertType = (data.type || '').toLowerCase();
         const dedupeKey = `${alertType.includes('entry') ? 'entry' : 'exit'}_${tradeId}`;
@@ -420,13 +442,43 @@ app.post('/trade-alert', async (req, res) => {
         }
 
         if (alertMsg) {
-            await sock.sendMessage(TARGET_JID, { text: alertMsg });
+            if (isWhatsAppConnected && sock && TARGET_JID) {
+                await sock.sendMessage(TARGET_JID, { text: alertMsg });
+                console.log(`[Webhook] Sent alert to WhatsApp (${TARGET_JID})`);
+                return res.status(200).json({ status: 'sent' });
+            } else {
+                pendingAlertQueue.push(alertMsg);
+                console.log(`[Webhook] WhatsApp not connected yet. Alert queued (${pendingAlertQueue.length} pending).`);
+                return res.status(200).json({ status: 'queued', pending_count: pendingAlertQueue.length });
+            }
         }
 
-        res.status(200).json({ status: 'success' });
+        res.status(200).json({ status: 'no_message_generated' });
     } catch (e) {
         console.error('[Webhook] Error dispatching alert:', e);
         res.status(500).json({ error: e.message });
+    }
+});
+
+// Test alert endpoint to verify phone alert reception immediately
+app.all('/test-alert', async (req, res) => {
+    const testMsg = `🧪 *[TEST ALERT] NASCON 20x FUTURES BRIDGE*\n` +
+                    `═════════════════════════\n` +
+                    `✅ WhatsApp connection is active and working!\n` +
+                    `📡 Bridge Port: ${BRIDGE_PORT}\n` +
+                    `📱 Target: ${TARGET_JID}\n` +
+                    `⏱️ Timestamp: ${new Date().toISOString()}\n` +
+                    `═════════════════════════`;
+    try {
+        if (isWhatsAppConnected && sock && TARGET_JID) {
+            await sock.sendMessage(TARGET_JID, { text: testMsg });
+            return res.json({ status: 'success', message: 'Test alert sent to your WhatsApp!' });
+        } else {
+            pendingAlertQueue.push(testMsg);
+            return res.json({ status: 'queued', message: 'WhatsApp not connected yet. Test alert queued.' });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
     }
 });
 
@@ -436,7 +488,8 @@ app.get('/status', (req, res) => {
         port: BRIDGE_PORT,
         freqtrade_api: `${FT_CONFIG.host}:${FT_CONFIG.port}`,
         target_jid: TARGET_JID,
-        whatsapp_connected: sock !== null
+        whatsapp_connected: isWhatsAppConnected,
+        pending_alerts: pendingAlertQueue.length
     });
 });
 
