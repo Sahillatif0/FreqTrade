@@ -1,4 +1,5 @@
 import logging
+import random
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -232,9 +233,37 @@ class NASCONChampionship20x(IStrategy):
         return dataframe
 
     # =========================================================================
-    # ANTI-CLUSTERING GUARD: MINIMUM 3-MINUTE GAP BETWEEN TRADES
+    # FAIL-SAFE: HARD-CAP STAKE AMOUNT AT 3500 USDT TO PREVENT BYBIT REJECTIONS
     # =========================================================================
-    min_time_between_entries: int = 180  # 3 minutes cooldown between any trade entry
+    def custom_stake_amount(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_stake: float,
+        min_stake: float | None,
+        max_stake: float,
+        leverage: float,
+        entry_tag: str | None,
+        side: str,
+        **kwargs,
+    ) -> float:
+        """
+        Bybit Max Contract Safety Guard:
+        Guarantees stake never exceeds 3500 USDT (avoiding Bybit's max contract rejection).
+        At 20x leverage = $70,000 position, easily filled on Bybit Tier 1.
+        """
+        target_stake = 3500.0
+        if proposed_stake > target_stake:
+            return target_stake
+        return proposed_stake
+
+    # =========================================================================
+    # ANTI-CLUSTERING GUARD: RANDOM 2-10 MINUTE SPACING BETWEEN TRADES
+    # =========================================================================
+    min_entry_delay_seconds: int = 120   # 2 minutes minimum
+    max_entry_delay_seconds: int = 600   # 10 minutes maximum
+    _current_cooldown_target: int = 180  # Initial cooldown target (seconds)
     _last_entry_time: datetime | None = None
 
     def confirm_trade_entry(
@@ -250,44 +279,53 @@ class NASCONChampionship20x(IStrategy):
         **kwargs,
     ) -> bool:
         """
-        Enforces a minimum 3-minute gap between ANY trade entries across all pairs.
-        Prevents multiple trades firing simultaneously.
+        Enforces a RANDOM 2-10 minute cooldown between trade entries.
+        RULE:
+        - If 0 trades are open: Enters IMMEDIATELY with ZERO delay!
+        - If 1+ trades are already open: Waits a random 2-10 minutes between entries.
+          Once the delay passes, if the setup is still valid, it enters.
         """
         curr_ts = current_time.timestamp()
 
-        # 1. In-memory cooldown check
-        if self._last_entry_time is not None:
-            last_ts = self._last_entry_time.timestamp()
-            elapsed = curr_ts - last_ts
-            if elapsed < self.min_time_between_entries:
-                logger.info(
-                    f"⏳ [Spacing Guard] Rejecting {pair} ({side}): only {elapsed:.0f}s elapsed "
-                    f"since last trade. Minimum required spacing is {self.min_time_between_entries}s (3 mins)."
-                )
-                return False
-
-        # 2. Check open trades from persistence (survives bot restarts)
+        # Check existing open trades from database
         try:
             from freqtrade.persistence import Trade
             open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
-            if open_trades:
-                for t in open_trades:
-                    if t.open_date_utc:
-                        open_ts = t.open_date_utc.timestamp()
-                        elapsed_db = curr_ts - open_ts
-                        if elapsed_db < self.min_time_between_entries:
-                            logger.info(
-                                f"⏳ [Spacing Guard] Rejecting {pair}: only {elapsed_db:.0f}s elapsed "
-                                f"since {t.pair} was opened. Minimum required spacing is {self.min_time_between_entries}s (3 mins)."
-                            )
-                            return False
-        except Exception as e:
-            logger.debug(f"Spacing Guard DB check exception: {e}")
+        except Exception:
+            open_trades = []
 
-        # Update last entry timestamp upon approval
+        # RULE 1: If NO trades are currently open, ENTER IMMEDIATELY!
+        if not open_trades:
+            self._last_entry_time = current_time
+            # Roll a random delay between 2-10 minutes for the NEXT trade
+            self._current_cooldown_target = random.randint(self.min_entry_delay_seconds, self.max_entry_delay_seconds)
+            logger.info(
+                f"⚡ [Spacing Guard] First trade approved immediately for {pair} ({side})! "
+                f"🎲 Next trade spacing randomized to {self._current_cooldown_target // 60}m {self._current_cooldown_target % 60}s."
+            )
+            return True
+
+        # RULE 2: If 1+ trades are already open, check time elapsed since most recent trade
+        latest_open_ts = max((t.open_date_utc.timestamp() for t in open_trades if t.open_date_utc), default=0)
+        elapsed = curr_ts - latest_open_ts
+
+        if elapsed < self._current_cooldown_target:
+            remaining = self._current_cooldown_target - elapsed
+            logger.info(
+                f"⏳ [Spacing Guard] Delaying {pair} ({side}): {elapsed:.0f}s elapsed since last open trade. "
+                f"Randomized cooldown is {self._current_cooldown_target // 60}m {self._current_cooldown_target % 60}s "
+                f"({remaining:.0f}s remaining). Will enter once time expires if setup is still valid."
+            )
+            return False
+
+        # RULE 3: Cooldown expired and trade setup is still valid -> APPROVE!
+        next_delay = random.randint(self.min_entry_delay_seconds, self.max_entry_delay_seconds)
         self._last_entry_time = current_time
+        self._current_cooldown_target = next_delay
         logger.info(
-            f"✅ [Spacing Guard] Trade entry APPROVED for {pair} ({side}). Next trade locked for {self.min_time_between_entries}s (3 mins)."
+            f"✅ [Spacing Guard] Entry APPROVED for {pair} ({side}) (Setup is still valid)! "
+            f"🎲 Next trade randomized cooldown set to {next_delay // 60}m {next_delay % 60}s."
         )
         return True
+
 
