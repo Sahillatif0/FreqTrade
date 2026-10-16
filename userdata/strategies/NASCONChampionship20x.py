@@ -230,3 +230,64 @@ class NASCONChampionship20x(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         return dataframe
+
+    # =========================================================================
+    # ANTI-CLUSTERING GUARD: MINIMUM 3-MINUTE GAP BETWEEN TRADES
+    # =========================================================================
+    min_time_between_entries: int = 180  # 3 minutes cooldown between any trade entry
+    _last_entry_time: datetime | None = None
+
+    def confirm_trade_entry(
+        self,
+        pair: str,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        current_time: datetime,
+        entry_tag: str | None,
+        side: str,
+        **kwargs,
+    ) -> bool:
+        """
+        Enforces a minimum 3-minute gap between ANY trade entries across all pairs.
+        Prevents multiple trades firing simultaneously.
+        """
+        curr_ts = current_time.timestamp()
+
+        # 1. In-memory cooldown check
+        if self._last_entry_time is not None:
+            last_ts = self._last_entry_time.timestamp()
+            elapsed = curr_ts - last_ts
+            if elapsed < self.min_time_between_entries:
+                logger.info(
+                    f"⏳ [Spacing Guard] Rejecting {pair} ({side}): only {elapsed:.0f}s elapsed "
+                    f"since last trade. Minimum required spacing is {self.min_time_between_entries}s (3 mins)."
+                )
+                return False
+
+        # 2. Check open trades from persistence (survives bot restarts)
+        try:
+            from freqtrade.persistence import Trade
+            open_trades = Trade.get_trades([Trade.is_open.is_(True)]).all()
+            if open_trades:
+                for t in open_trades:
+                    if t.open_date_utc:
+                        open_ts = t.open_date_utc.timestamp()
+                        elapsed_db = curr_ts - open_ts
+                        if elapsed_db < self.min_time_between_entries:
+                            logger.info(
+                                f"⏳ [Spacing Guard] Rejecting {pair}: only {elapsed_db:.0f}s elapsed "
+                                f"since {t.pair} was opened. Minimum required spacing is {self.min_time_between_entries}s (3 mins)."
+                            )
+                            return False
+        except Exception as e:
+            logger.debug(f"Spacing Guard DB check exception: {e}")
+
+        # Update last entry timestamp upon approval
+        self._last_entry_time = current_time
+        logger.info(
+            f"✅ [Spacing Guard] Trade entry APPROVED for {pair} ({side}). Next trade locked for {self.min_time_between_entries}s (3 mins)."
+        )
+        return True
+

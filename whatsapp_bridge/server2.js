@@ -204,6 +204,8 @@ async function startWhatsAppBot() {
 // ==============================================================================
 // 3. INTERACTIVE COMMAND CONTROLLER
 // ==============================================================================
+let heartbeatEnabled = true;
+
 async function handleCommand(cmd) {
     const cleanCmd = cmd.toLowerCase().replace('/', '').trim();
 
@@ -212,13 +214,76 @@ async function handleCommand(cmd) {
                `---------------------------------------\n` +
                `⚡ *20x Leverage Bybit Demo Control Center*\n\n` +
                `📌 *Available Commands:*\n` +
+               `🤖 */what* - Exactly what the bot is doing right now\n` +
                `📊 */status* - Live PnL, Wallet Equity & Open Positions\n` +
                `🎯 */rubric* - Official Scorecard Tracker (65/65 Points Audit)\n` +
                `💰 */pnl* - Realized Profit Summary & ROI %\n` +
                `📈 */trades* - Active 20x Positions with Liquidation Buffer\n` +
                `🪙 */pairs* - Allowed Top 20 Market Cap Whitelist\n` +
+               `💓 */heartbeat on|off* - Toggle 30-min automatic activity reports\n` +
                `⏱️ */ping* - Check bot latency and API health\n` +
                `---------------------------------------`;
+    }
+
+    if (cleanCmd === 'what' || cleanCmd === 'activity' || cleanCmd === 'doing') {
+        const [pingRes, statusRes, balanceRes, profitRes] = await Promise.all([
+            callFreqtradeApi('ping'),
+            callFreqtradeApi('status'),
+            callFreqtradeApi('balance'),
+            callFreqtradeApi('profit')
+        ]);
+
+        const isOnline = !pingRes.error && pingRes.status === 'pong';
+        if (!isOnline) {
+            return `🤖 *WHAT THE BOT IS DOING:*\n` +
+                   `═════════════════════════\n` +
+                   `🔴 *Status:* OFFLINE or UNREACHABLE\n` +
+                   `⚠️ Cannot reach Freqtrade API on Port ${FT_CONFIG.port}.\n` +
+                   `👉 Start your bot with:\n` +
+                   `freqtrade trade --config userdata/config_bybit_demo_competition_20x.json --strategy NASCONChampionship20x --strategy-path userdata/strategies --userdir userdata\n` +
+                   `═════════════════════════`;
+        }
+
+        const openTrades = Array.isArray(statusRes) ? statusRes : [];
+        const totalEquity = balanceRes?.total_balance || 1000.0;
+        const totalClosed = profitRes?.trade_count || 0;
+        const winCount = profitRes?.winning_trades || 0;
+        const winRate = totalClosed > 0 ? ((winCount / totalClosed) * 100).toFixed(1) : '0.0';
+
+        let actionDetails = '';
+        if (openTrades.length === 0) {
+            actionDetails = `• *Current Action:* 🔍 Actively evaluating 5m & 15m candles\n` +
+                            `• *Target Setups:* TTM Squeeze Breakout, FVG Reclaims, Liquidity Sweeps\n` +
+                            `• *Pairs Being Scanned (8):* SOL, NEAR, XRP, DOGE, SUI, ETH, BNB, AVAX\n` +
+                            `• *Position Status:* 0 / 3 open (Market flat, waiting for institutional confluence)`;
+        } else {
+            actionDetails = `• *Current Action:* 🛡️ Actively managing ${openTrades.length} open position(s)\n` +
+                            `• *Trailing Stoplock:* Moves SL to +3% ROE once trade reaches +12% ROE\n` +
+                            `• *Take-Profit Targets:* Staggered from +16% to +36% ROE\n` +
+                            `• *Active Positions:*\n` +
+                            openTrades.map((t, idx) => `  ${idx+1}. *${t.pair}* (${t.is_short ? 'SHORT 🔻' : 'LONG 🔼'})\n     Entry: $${t.open_rate} | ROE: ${(t.profit_ratio * 100).toFixed(2)}%\n     Stop-Loss: $${t.stop_loss}`).join('\n');
+        }
+
+        return `🤖 *WHAT THE BOT IS DOING RIGHT NOW*\n` +
+               `═════════════════════════\n` +
+               `🟢 *Engine Status:* ONLINE & RUNNING\n` +
+               `⚙️ *Strategy:* NASCONChampionship20x\n` +
+               `⚡ *Exchange:* Bybit Demo (20x Isolated Futures)\n` +
+               `💼 *Current Demo Equity:* $${Number(totalEquity).toFixed(2)} USDT\n` +
+               `📊 *Closed Trades:* ${totalClosed} / 20 required (${winRate}% Win Rate)\n` +
+               `═════════════════════════\n` +
+               `${actionDetails}\n` +
+               `═════════════════════════`;
+    }
+
+    if (cleanCmd === 'heartbeat on') {
+        heartbeatEnabled = true;
+        return `✅ *Heartbeat Enabled:* You will receive an activity report every 30 minutes!`;
+    }
+
+    if (cleanCmd === 'heartbeat off') {
+        heartbeatEnabled = false;
+        return `🔕 *Heartbeat Muted:* You will now only receive real trade execution alerts.`;
     }
 
     if (cleanCmd === 'status') {
@@ -353,7 +418,11 @@ async function handleCommand(cmd) {
 }
 
 // ==============================================================================
+// 4. WEBHOOK DISPATCHER & PROACTIVE ACTIVITY MONITOR
+// ==============================================================================
 const processedAlerts = new Map(); // key: `${type}_${trade_id}`, val: timestamp
+let lastBotOnlineState = null;
+let lastHeartbeatTime = Date.now();
 
 app.post('/trade-alert', async (req, res) => {
     try {
@@ -362,11 +431,11 @@ app.post('/trade-alert', async (req, res) => {
 
         const tradeId = data.trade_id || `${Date.now()}`;
         const alertType = (data.type || '').toLowerCase();
-        const dedupeKey = `${alertType.includes('entry') ? 'entry' : 'exit'}_${tradeId}`;
+        const dedupeKey = `${alertType}_${tradeId}`;
         const now = Date.now();
 
-        // Prevent duplicate alerts if both entry and entry_fill are received
-        if (processedAlerts.has(dedupeKey) && (now - processedAlerts.get(dedupeKey)) < 60000) {
+        // Prevent duplicate alerts if received in short bursts
+        if (processedAlerts.has(dedupeKey) && (now - processedAlerts.get(dedupeKey)) < 30000) {
             console.log(`[Webhook] Ignored duplicate alert for ${dedupeKey}`);
             return res.status(200).json({ status: 'duplicate_ignored' });
         }
@@ -376,14 +445,13 @@ app.post('/trade-alert', async (req, res) => {
         const pair = data.pair || 'CRYPTO';
         const direction = (data.direction || 'long').toUpperCase();
         const sideIcon = direction === 'SHORT' ? '🔻 SHORT' : '🔼 LONG';
+        const cleanPair = pair.split(':')[0]; // e.g. SOL/USDT
 
-        if (alertType.includes('entry')) {
+        // 1. ENTRY SIGNAL (Order Placement)
+        if (alertType === 'entry') {
             const openRate = parseFloat(data.open_rate) || 0;
-            const stake = Number(data.stake_amount || 0).toFixed(2);
             const rawTag = data.enter_tag || 'institutional_confluence';
-            const cleanPair = pair.split(':')[0]; // e.g. ETH/USDT
 
-            // Map institutional setup names for high-clarity presentation
             let edgeName = rawTag;
             if (rawTag.includes('ttm')) {
                 edgeName = '💥 TTM Squeeze Volatility Breakout';
@@ -393,28 +461,25 @@ app.post('/trade-alert', async (req, res) => {
                 edgeName = '💧 Smart Money Liquidity Sweep & Wick Rejection';
             }
 
-            // Calculate precise price levels for Bybit manual entry (-0.80% price = -16% ROE at 20x)
-            let slPrice = 0;
-            let tp1Price = 0;
-            let tp2Price = 0;
-
+            let slPrice = 0, tp1Price = 0, tp2Price = 0;
             if (openRate > 0) {
                 if (direction === 'SHORT') {
                     slPrice = (openRate * 1.008).toFixed(openRate < 1 ? 5 : 2);
-                    tp1Price = (openRate * 0.988).toFixed(openRate < 1 ? 5 : 2); // +24% ROE (1.5R)
-                    tp2Price = (openRate * 0.9825).toFixed(openRate < 1 ? 5 : 2); // +35% ROE (2.2R)
+                    tp1Price = (openRate * 0.988).toFixed(openRate < 1 ? 5 : 2); // +24% ROE
+                    tp2Price = (openRate * 0.9825).toFixed(openRate < 1 ? 5 : 2); // +35% ROE
                 } else {
                     slPrice = (openRate * 0.992).toFixed(openRate < 1 ? 5 : 2);
-                    tp1Price = (openRate * 1.012).toFixed(openRate < 1 ? 5 : 2); // +24% ROE (1.5R)
-                    tp2Price = (openRate * 1.0175).toFixed(openRate < 1 ? 5 : 2); // +35% ROE (2.2R)
+                    tp1Price = (openRate * 1.012).toFixed(openRate < 1 ? 5 : 2); // +24% ROE
+                    tp2Price = (openRate * 1.0175).toFixed(openRate < 1 ? 5 : 2); // +35% ROE
                 }
             }
 
-            alertMsg = `🚨 *[TRADE SIGNAL] NASCON 20x FUTURES*\n` +
+            alertMsg = `🚨 *[BOT ACTION: SIGNAL DETECTED & PLACING ORDER]*\n` +
                        `═════════════════════════\n` +
+                       `🤖 *Status:* Sending entry order to Bybit Demo\n` +
                        `🪙 *Contract:* ${cleanPair} (${sideIcon})\n` +
                        `⚡ *Leverage:* 20x Isolated\n` +
-                       `📥 *Entry Price:* $${openRate}\n` +
+                       `📥 *Target Entry Price:* $${openRate}\n` +
                        `🧠 *Signal Edge:* ${edgeName}\n` +
                        `═════════════════════════\n` +
                        `📋 *MANUAL BYBIT ORDER PARAMS:*\n` +
@@ -423,22 +488,60 @@ app.post('/trade-alert', async (req, res) => {
                        `🎯 *Take-Profit 2:* $${tp2Price} (+35% ROE | 2.2 RR)\n` +
                        `⏱️ *Rule Note:* Hold >= 5 mins for judging criteria\n` +
                        `═════════════════════════`;
-        } else if (alertType.includes('exit')) {
+        }
+        // 2. ENTRY FILL (Order Executed on Exchange)
+        else if (alertType === 'entry_fill') {
+            const openRate = parseFloat(data.open_rate) || 0;
+            alertMsg = `✅ *[BOT ACTION: ORDER FILLED ON BYBIT]*\n` +
+                       `═════════════════════════\n` +
+                       `🤖 *Status:* Position now LIVE on Bybit Demo\n` +
+                       `🪙 *Contract:* ${cleanPair} (${sideIcon})\n` +
+                       `⚡ *Leverage:* 20x Isolated\n` +
+                       `📥 *Executed Entry:* $${openRate}\n` +
+                       `🛡️ *Active Protection:* Trailing stoplock engaged (+12% ROE trigger locks +3% profit)\n` +
+                       `⏱️ *Holding timer started* (Rule requires >= 5 mins)\n` +
+                       `═════════════════════════`;
+        }
+        // 3. ENTRY CANCEL
+        else if (alertType === 'entry_cancel') {
+            alertMsg = `⚠️ *[BOT ACTION: ENTRY CANCELLED]*\n` +
+                       `═════════════════════════\n` +
+                       `🪙 *Contract:* ${cleanPair}\n` +
+                       `ℹ️ *Reason:* ${data.reason || 'Order not filled within timeout'}\n` +
+                       `👉 Bot returning to scanning pool.\n` +
+                       `═════════════════════════`;
+        }
+        // 4. EXIT TRIGGER (Placing Closing Order)
+        else if (alertType === 'exit') {
+            const exitReason = data.exit_reason || 'Target Reached';
+            alertMsg = `🏁 *[BOT ACTION: EXIT SIGNAL TRIGGERED]*\n` +
+                       `═════════════════════════\n` +
+                       `🤖 *Status:* Closing position on Bybit\n` +
+                       `🪙 *Contract:* ${cleanPair} (${sideIcon})\n` +
+                       `🚪 *Trigger:* ${exitReason}\n` +
+                       `👉 Close manual position on Bybit if managing manually.\n` +
+                       `═════════════════════════`;
+        }
+        // 5. EXIT FILL (Trade Locked & Finalized)
+        else if (alertType === 'exit_fill') {
             const pnlRoe = Number(data.profit_percent || 0).toFixed(2);
             const pnlUsdt = Number(data.profit_amount || 0).toFixed(2);
             const isProfit = Number(pnlUsdt) >= 0;
             const outcomeIcon = isProfit ? '🟢 PROFIT LOCKED' : '🔴 STOPLOSS HIT';
             const exitReason = data.exit_reason || 'Target Reached';
-            const cleanPair = pair.split(':')[0];
 
-            alertMsg = `🏁 *[CLOSE SIGNAL] NASCON 20x FUTURES*\n` +
+            alertMsg = `💰 *[BOT ACTION: TRADE FINALIZED & LOCKED]*\n` +
                        `═════════════════════════\n` +
                        `🪙 *Contract:* ${cleanPair} (${sideIcon})\n` +
-                       `📊 *Bot Outcome:* ${outcomeIcon}\n` +
-                       `💰 *Bot PnL:* ${isProfit ? '+' : ''}$${pnlUsdt} USDT (${isProfit ? '+' : ''}${pnlRoe}% ROE)\n` +
-                       `🚪 *Trigger:* ${exitReason}\n` +
-                       `👉 *Action:* Close manual position on Bybit if still open.\n` +
+                       `📊 *Result:* ${outcomeIcon}\n` +
+                       `💵 *Realized PnL:* ${isProfit ? '+' : ''}$${pnlUsdt} USDT (${isProfit ? '+' : ''}${pnlRoe}% ROE)\n` +
+                       `🚪 *Exit Reason:* ${exitReason}\n` +
+                       `🎯 *Type /rubric in chat to see updated competition score!*\n` +
                        `═════════════════════════`;
+        }
+        // 6. GENERAL STATUS
+        else if (alertType === 'status') {
+            alertMsg = `ℹ️ *[BOT ENGINE STATUS]*\n${data.status || 'Bot is operational.'}`;
         }
 
         if (alertMsg) {
@@ -459,6 +562,82 @@ app.post('/trade-alert', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+// Proactive Bot Activity & Heartbeat Monitor
+async function checkBotActivity() {
+    if (!isWhatsAppConnected || !sock || !TARGET_JID) return;
+
+    try {
+        const pingRes = await callFreqtradeApi('ping');
+        const isOnline = !pingRes.error && pingRes.status === 'pong';
+
+        // 1. Detect Bot Transition to ONLINE
+        if (lastBotOnlineState === false && isOnline) {
+            lastBotOnlineState = true;
+            const msg = `🚀 *[BOT ONLINE & SCANNING] NASCON 20x FUTURES*\n` +
+                        `═════════════════════════\n` +
+                        `✅ Connected to Bybit Demo Trading Bot on Port ${FT_CONFIG.port}\n` +
+                        `⚙️ Strategy: *NASCONChampionship20x*\n` +
+                        `🪙 Monitored Pairs (8): SOL, NEAR, XRP, DOGE, SUI, ETH, BNB, AVAX\n` +
+                        `⚡ Leverage: 20x Isolated\n` +
+                        `⏱️ Live order books are actively being evaluated for setups.\n` +
+                        `═════════════════════════`;
+            await sock.sendMessage(TARGET_JID, { text: msg });
+        }
+        // 2. Detect Bot Transition to OFFLINE
+        else if (lastBotOnlineState === true && !isOnline) {
+            lastBotOnlineState = false;
+            const msg = `⚠️ *[ALERT: BOT DISCONNECTED] NASCON 20x FUTURES*\n` +
+                        `═════════════════════════\n` +
+                        `🔴 Cannot reach Freqtrade API on Port ${FT_CONFIG.port}!\n` +
+                        `👉 Check your terminal or VPS to ensure the bot is running.\n` +
+                        `═════════════════════════`;
+            await sock.sendMessage(TARGET_JID, { text: msg });
+        } else if (lastBotOnlineState === null) {
+            lastBotOnlineState = isOnline;
+        }
+
+        if (!isOnline) return;
+
+        // 3. Periodic 30-Minute Heartbeat
+        const now = Date.now();
+        if (heartbeatEnabled && (now - lastHeartbeatTime) >= 30 * 60 * 1000) {
+            lastHeartbeatTime = now;
+            const [statusRes, balanceRes, profitRes] = await Promise.all([
+                callFreqtradeApi('status'),
+                callFreqtradeApi('balance'),
+                callFreqtradeApi('profit')
+            ]);
+            const openTrades = Array.isArray(statusRes) ? statusRes : [];
+            const openCount = openTrades.length;
+            const totalEquity = balanceRes?.total_balance || 1000.0;
+            const totalClosed = profitRes?.trade_count || 0;
+            const winCount = profitRes?.winning_trades || 0;
+            const winRate = totalClosed > 0 ? ((winCount / totalClosed) * 100).toFixed(1) : '0.0';
+            const pnlUsdt = Number(profitRes?.profit_all_abs || 0).toFixed(2);
+            const pnlSign = Number(pnlUsdt) >= 0 ? '+' : '';
+
+            let positionSummary = '💤 0 / 3 open (Market flat, scanning for Squeeze/FVG/Sweep)';
+            if (openCount > 0) {
+                positionSummary = openTrades.map(t => `${t.pair} (${t.is_short ? 'SHORT' : 'LONG'} ${(t.profit_ratio * 100).toFixed(1)}% ROE)`).join(', ');
+            }
+
+            const heartbeatMsg = `⏱️ *[BOT 30-MIN ACTIVITY UPDATE]*\n` +
+                                 `═════════════════════════\n` +
+                                 `🤖 *Status:* 🟢 Running & Actively Evaluating Markets\n` +
+                                 `🪙 *Pairs (8):* SOL, NEAR, XRP, DOGE, SUI, ETH, BNB, AVAX\n` +
+                                 `⚡ *Positions:* ${openCount} / 3 Open\n` +
+                                 `📊 *Detail:* ${positionSummary}\n` +
+                                 `💼 *Demo Equity:* $${Number(totalEquity).toFixed(2)} USDT\n` +
+                                 `🎯 *PnL so far:* ${pnlSign}$${pnlUsdt} USDT (${winRate}% Win Rate | ${totalClosed}/20 Trades)\n` +
+                                 `⏱️ *Heartbeat:* Every 30m (Type /heartbeat off to mute)\n` +
+                                 `═════════════════════════`;
+            await sock.sendMessage(TARGET_JID, { text: heartbeatMsg });
+        }
+    } catch (e) {
+        console.error('[Activity] Error checking bot activity:', e.message);
+    }
+}
 
 // Test alert endpoint to verify phone alert reception immediately
 app.all('/test-alert', async (req, res) => {
@@ -489,7 +668,8 @@ app.get('/status', (req, res) => {
         freqtrade_api: `${FT_CONFIG.host}:${FT_CONFIG.port}`,
         target_jid: TARGET_JID,
         whatsapp_connected: isWhatsAppConnected,
-        pending_alerts: pendingAlertQueue.length
+        pending_alerts: pendingAlertQueue.length,
+        heartbeat_enabled: heartbeatEnabled
     });
 });
 
@@ -503,4 +683,6 @@ app.listen(BRIDGE_PORT, () => {
     console.log(`🔗 Connected Freqtrade API: http://${FT_CONFIG.host}:${FT_CONFIG.port}`);
     console.log(`================================================================`);
     startWhatsAppBot();
+    // Start activity monitor (checks bot every 30 seconds)
+    setInterval(checkBotActivity, 30000);
 });
