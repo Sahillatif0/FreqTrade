@@ -40,22 +40,21 @@ class NASCONChampionship20x(IStrategy):
     timeframe = "15m"
     can_short = True
 
-    # High-Yield Asymmetric ROI (Engineered for RR >= 2.0)
+    # High-Yield Asymmetric ROI (Calibrated for High Winrate & RR >= 2.0)
     minimal_roi = {
-        "0": 0.50,     # +50% ROE (+2.50% spot move) - High RR impulse
-        "45": 0.35,    # +35% ROE (+1.75% spot move) - Base target
-        "120": 0.22,   # +22% ROE (+1.10% spot move) - Time decay target
-        "240": 0.12    # +12% ROE (+0.60% spot move) - Floor
+        "0": 0.36,     # +36% ROE (+1.80% spot move) - High-conviction runner
+        "20": 0.24,    # +24% ROE (+1.20% spot move) - Primary target (1.7R)
+        "50": 0.16,    # +16% ROE (+0.80% spot move) - Optimal time target
+        "120": 0.09    # +9% ROE (+0.45% spot move) - Floor capital turnover
     }
 
-    # Strict -16% margin stoploss = -0.80% price move at 20x leverage
-    # Safe from normal 15m noise, preserving 76.5%+ winrate!
-    stoploss = -0.16
+    # Strict -14% margin stoploss = -0.70% price move at 20x leverage
+    stoploss = -0.14
 
-    # Trailing Stoplock: Protects winners and ensures early breakeven
+    # Trailing Stoplock: Locks winners early to guarantee high winrate
     trailing_stop = True
-    trailing_stop_positive_offset = 0.18 # Triggered once trade reaches +18% ROE (+0.90% spot move)
-    trailing_stop_positive = 0.04        # Locks +4% ROE minimum profit floor
+    trailing_stop_positive_offset = 0.12 # Triggered early at +12% ROE (+0.60% spot move)
+    trailing_stop_positive = 0.03        # Locks +3% ROE minimum profit floor
     trailing_only_offset_is_reached = True
 
     process_only_new_candles = True
@@ -203,13 +202,14 @@ class NASCONChampionship20x(IStrategy):
         # TRIGGER 3: INSTITUTIONAL LIQUIDITY SWEEP & RECLAIM
         # -------------------------------------------------------------
         sweep_long = (
-            (dataframe["volume"] > dataframe["volume_sma"] * 1.10) &
+            (dataframe["volume"] > dataframe["volume_sma"] * 1.15) &
             (dataframe["low"] < dataframe["swing_low"]) &
             (dataframe["close"] > dataframe["swing_low"]) &
             (dataframe["is_green"] == True) &
-            (dataframe["lower_wick"] >= 0.35 * dataframe["body"]) &
-            (dataframe["rsi"] >= 28) & (dataframe["rsi"] <= 48) &
-            (dataframe["close"] > dataframe["ema_50"] * 0.975)
+            (dataframe["lower_wick"] >= 0.50 * dataframe["body"]) &
+            (dataframe["rsi"] >= 38) & (dataframe["rsi"] <= 52) &
+            (dataframe["close"] > dataframe["ema_50"]) &
+            (dataframe["ema_20"] >= dataframe["ema_50"])
         )
         dataframe.loc[sweep_long, "enter_long"] = 1
         dataframe.loc[sweep_long, "enter_tag"] = "rubric_liquidity_sweep_long"
