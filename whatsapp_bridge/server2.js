@@ -410,6 +410,54 @@ async function handleCommand(cmd) {
                `🚫 *Blacklisted:* TAO, NEAR, Low-Caps (Prevents -5pt deduction)`;
     }
 
+    // Interactive Test Trade Placement
+    if (cleanCmd.startsWith('forceentry') || cleanCmd.startsWith('testentry') || cleanCmd.startsWith('testbuy')) {
+        const parts = cleanCmd.split(' ').filter(Boolean);
+        let rawPair = parts[1] || 'SOL';
+        let side = (parts[2] || 'long').toLowerCase();
+
+        // Normalize coin name to Bybit futures standard (e.g. SOL -> SOL/USDT:USDT)
+        let coin = rawPair.toUpperCase().replace('/USDT:USDT', '').replace('/USDT', '').replace('USDT', '');
+        let formattedPair = `${coin}/USDT:USDT`;
+
+        const payload = {
+            pair: formattedPair,
+            side: side.includes('short') ? 'short' : 'long'
+        };
+
+        const res = await callFreqtradeApi('forceentry', 'POST', payload);
+        if (res.error) {
+            return `❌ *Failed to Force Test Entry:*\n${res.error}\n(Ensure bot is running and 'force_entry_enable: true' in config)`;
+        }
+
+        return `🧪 *[TEST TRADE ORDER DISPATCHED]*\n` +
+               `═════════════════════════\n` +
+               `🪙 *Pair:* ${formattedPair}\n` +
+               `⚡ *Direction:* ${payload.side.toUpperCase()} (20x Isolated)\n` +
+               `📥 Order sent to Bybit Demo API.\n` +
+               `👉 Check Bybit Demo & WhatsApp for fill confirmation.\n` +
+               `💡 Use */forceexit* to close it anytime.\n` +
+               `═════════════════════════`;
+    }
+
+    if (cleanCmd.startsWith('forceexit') || cleanCmd.startsWith('testexit') || cleanCmd.startsWith('close')) {
+        const parts = cleanCmd.split(' ').filter(Boolean);
+        const tradeId = parts[1] || 'all';
+
+        const payload = {
+            tradeid: tradeId
+        };
+
+        const res = await callFreqtradeApi('forceexit', 'POST', payload);
+        if (res.error) {
+            return `❌ *Failed to Force Exit:*\n${res.error}`;
+        }
+
+        return `🏁 *[TEST TRADE EXIT DISPATCHED]*\n` +
+               `Closed trade ${tradeId} on Bybit Demo.\n` +
+               `Check WhatsApp for realized PnL alert!`;
+    }
+
     if (cleanCmd === 'ping') {
         return `🏓 *PONG!* Competition Bridge is live and healthy.\nListening on Port ${BRIDGE_PORT} | Target: ${TARGET_JID}`;
     }
@@ -492,13 +540,20 @@ app.post('/trade-alert', async (req, res) => {
         // 2. ENTRY FILL (Order Executed on Exchange)
         else if (alertType === 'entry_fill') {
             const openRate = parseFloat(data.open_rate) || 0;
+            const isShort = (data.direction || '').toLowerCase() === 'short';
+            const decimals = openRate < 1 ? 5 : (openRate < 50 ? 4 : 2);
+            const tpPrice = isShort ? (openRate * (1 - 0.016)).toFixed(decimals) : (openRate * (1 + 0.016)).toFixed(decimals);
+            const slPrice = isShort ? (openRate * (1 + 0.007)).toFixed(decimals) : (openRate * (1 - 0.007)).toFixed(decimals);
+
             alertMsg = `✅ *[BOT ACTION: ORDER FILLED ON BYBIT]*\n` +
                        `═════════════════════════\n` +
                        `🤖 *Status:* Position now LIVE on Bybit Demo\n` +
                        `🪙 *Contract:* ${cleanPair} (${sideIcon})\n` +
                        `⚡ *Leverage:* 20x Isolated\n` +
                        `📥 *Executed Entry:* $${openRate}\n` +
-                       `🛡️ *Active Protection:* Trailing stoplock engaged (+12% ROE trigger locks +3% profit)\n` +
+                       `🎯 *Exchange Take-Profit (TP):* $${tpPrice} (+32% ROE | 2.28 RR)\n` +
+                       `🛑 *Exchange Stop-Loss (SL):* $${slPrice} (-14% ROE)\n` +
+                       `🛡️ *Active Protection:* Attached directly to Bybit position + Trailing lock at +12% ROE\n` +
                        `⏱️ *Holding timer started* (Rule requires >= 5 mins)\n` +
                        `═════════════════════════`;
         }

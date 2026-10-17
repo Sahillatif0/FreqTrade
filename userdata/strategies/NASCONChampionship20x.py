@@ -70,6 +70,9 @@ class NASCONChampionship20x(IStrategy):
         "stoploss_on_exchange": False
     }
 
+    # Tracking for exchange TP/SL management
+    _trailing_sl_updated: set = set()
+
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, side: str,
                  **kwargs) -> float:
@@ -327,5 +330,133 @@ class NASCONChampionship20x(IStrategy):
             f"🎲 Next trade randomized cooldown set to {next_delay // 60}m {next_delay % 60}s."
         )
         return True
+
+    # =========================================================================
+    # DIRECT EXCHANGE TP & SL: ATTACHES NATIVE TP/SL TO BYBIT POSITION
+    # =========================================================================
+    def order_filled(self, pair: str, trade, order, current_time: datetime, **kwargs) -> None:
+        """
+        Called immediately after an order fills.
+        If an entry order fills, it automatically calculates and places
+        Take-Profit (+32% ROE) and Stop-Loss (-14% ROE) directly on Bybit exchange!
+        """
+        if order.ft_order_side == trade.entry_side:
+            self._set_exchange_tp_sl(pair, trade, order)
+
+    def _set_exchange_tp_sl(self, pair: str, trade, order) -> None:
+        """
+        Submits native Take-Profit and Stop-Loss directly to Bybit V5 Position Trading-Stop.
+        Guarantees:
+        1. TP and SL are directly active and visible on the Bybit position on the exchange.
+        2. Guaranteed execution on Bybit's matching engine even if the VPS connection lags.
+        3. Fulfills NASCON competition rubric RR >= 2.0 (32% TP / 14% SL = 2.28x RR).
+        """
+        try:
+            if not self.dp or not self.dp._exchange:
+                logger.warning(f"[Exchange TP/SL] DataProvider exchange not available for {pair}.")
+                return
+
+            if self.config.get("dry_run", False):
+                logger.info(f"🧪 [Dry Run] Simulating Exchange TP/SL attachment for {pair}")
+                return
+
+            entry_price = float(order.safe_price or trade.open_rate)
+            if entry_price <= 0:
+                logger.warning(f"[Exchange TP/SL] Invalid entry price ({entry_price}) for {pair}.")
+                return
+
+            is_short = trade.is_short
+
+            # NASCON Rubric Calibrations:
+            # Leverage = 20x
+            # Target TP = +32.0% ROE -> 1.60% spot price movement
+            # Hard SL   = -14.0% ROE -> 0.70% spot price movement
+            # RR Ratio  = 32% / 14% = 2.28x (Strictly >= 2.0 for 10/10 Rubric score)
+            if not is_short:
+                tp_target = entry_price * (1.0 + 0.0160)
+                sl_target = entry_price * (1.0 - 0.0070)
+            else:
+                tp_target = entry_price * (1.0 - 0.0160)
+                sl_target = entry_price * (1.0 + 0.0070)
+
+            # Round prices to exchange tick size precision
+            tp_price = self.dp._exchange.price_to_precision(pair, tp_target)
+            sl_price = self.dp._exchange.price_to_precision(pair, sl_target)
+
+            # Format Bybit Linear Symbol (e.g. SOL/USDT:USDT -> SOLUSDT)
+            symbol = pair.split(':')[0].replace('/', '')
+
+            payload = {
+                "category": "linear",
+                "symbol": symbol,
+                "takeProfit": str(tp_price),
+                "stopLoss": str(sl_price),
+                "tpTriggerBy": "MarkPrice",
+                "slTriggerBy": "MarkPrice",
+                "tpslMode": "Full",
+                "tpOrderType": "Market",
+                "slOrderType": "Market",
+                "positionIdx": 0
+            }
+
+            exchange_api = self.dp._exchange._api
+            res = exchange_api.private_post_v5_position_trading_stop(payload)
+            logger.info(
+                f"🎯 [Bybit Exchange TP/SL Active] {pair} ({'SHORT' if is_short else 'LONG'}) | "
+                f"Entry: {entry_price} | TP: {tp_price} (+32% ROE) | SL: {sl_price} (-14% ROE) | "
+                f"Bybit Result: {res}"
+            )
+        except Exception as e:
+            logger.error(f"❌ [Bybit Exchange TP/SL Error] Could not attach TP/SL directly on Bybit for {pair}: {e}")
+
+    def custom_stoploss(self, pair: str, trade, current_time: datetime,
+                        current_rate: float, current_profit: float, after_fill: bool,
+                        **kwargs) -> float | None:
+        """
+        Dynamically adjusts stoploss and moves the Bybit exchange SL to lock profit
+        once the trade reaches +12% ROE (+0.60% spot move).
+        """
+        # When trade is in >= +12% ROE profit, lock in +3% ROE floor directly on Bybit
+        trade_id = getattr(trade, 'id', None)
+        if trade_id and trade_id not in self._trailing_sl_updated and current_profit >= 0.12:
+            self._update_exchange_sl(pair, trade, current_rate)
+            self._trailing_sl_updated.add(trade_id)
+
+        return None
+
+    def _update_exchange_sl(self, pair: str, trade, current_rate: float) -> None:
+        """
+        Updates the Bybit exchange position Stop-Loss to lock +3% ROE profit.
+        """
+        try:
+            if not self.dp or not self.dp._exchange or self.config.get("dry_run", False):
+                return
+
+            entry_price = float(trade.open_rate)
+            is_short = trade.is_short
+            symbol = pair.split(':')[0].replace('/', '')
+
+            # Lock +3% ROE profit floor (+0.15% spot move)
+            if not is_short:
+                locked_sl = entry_price * (1.0 + 0.0015)
+            else:
+                locked_sl = entry_price * (1.0 - 0.0015)
+
+            sl_price = self.dp._exchange.price_to_precision(pair, locked_sl)
+
+            payload = {
+                "category": "linear",
+                "symbol": symbol,
+                "stopLoss": str(sl_price),
+                "slTriggerBy": "MarkPrice",
+                "tpslMode": "Full",
+                "slOrderType": "Market",
+                "positionIdx": 0
+            }
+            exchange_api = self.dp._exchange._api
+            res = exchange_api.private_post_v5_position_trading_stop(payload)
+            logger.info(f"🛡️ [Bybit Trailing Lock] Moved Exchange SL for {pair} to {sl_price} (+3% ROE profit floor). Res: {res}")
+        except Exception as e:
+            logger.error(f"❌ [Bybit Trailing Lock Error] Could not update SL on exchange for {pair}: {e}")
 
 
