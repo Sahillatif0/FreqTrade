@@ -11,7 +11,7 @@ from typing import Any, Final
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import scoped_session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from freqtrade.exceptions import OperationalException
 from freqtrade.persistence.base import ModelBase
@@ -65,11 +65,11 @@ def init_db(db_url: str) -> None:
                 "poolclass": StaticPool,
             }
         )
-    # Take care of thread ownership
-    if db_url.startswith("sqlite://"):
+    elif db_url.startswith("sqlite://"):
         kwargs.update(
             {
-                "connect_args": {"check_same_thread": False},
+                "poolclass": NullPool,
+                "connect_args": {"check_same_thread": False, "timeout": 30},
             }
         )
 

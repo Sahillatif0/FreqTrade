@@ -3085,6 +3085,6 @@ app.listen(BRIDGE_PORT, () => {
     startWhatsApp();
     setInterval(checkMorningDigest, 60000);        // Check every minute for 9:00 AM PKT digest
     setInterval(checkCustomPriceAlerts, 20000);    // Check custom price alerts every 20 seconds
-    setInterval(checkTradeMilestones, 5000);       // Check trade SL, TP, milestones & duration every 5 seconds
+    setInterval(checkTradeMilestones, 15000);      // Check trade SL, TP, milestones & duration every 15 seconds
     setInterval(checkStrategyModes, 30000);        // Check sweep mode & ignition mode every 30 seconds
 });
