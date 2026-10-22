@@ -1,0 +1,81 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "max_open_trades": 1,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 0.99,
+    "dry_run": true,
+    "dry_run_wallet": 10000,
+    "trading_mode": "spot",
+    "margin_mode": "",
+    "cancel_open_orders_on_exit": false,
+    "unfilledtimeout": {
+        "entry": 5,
+        "exit": 5,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exchange": {
+        "name": "binance",
+        "key": "",
+        "secret": "",
+        "pair_whitelist": [
+            "SUI/USDT",
+            "INJ/USDT",
+            "SOL/USDT",
+            "DOT/USDT",
+            "NEAR/USDT",
+            "TAO/USDT"
+        ],
+        "pair_blacklist": [
+            "TRX/USDT",
+            "RENDER/USDT",
+            "STX/USDT"
+        ]
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "webhook": {
+        "enabled": true,
+        "url": "http://127.0.0.1:5001/trade-alert",
+        "format": "json",
+        "webhookentry": {
+            "strategy": "TournamentSpeedSniper5m",
+            "action": "BUY",
+            "pair": "{pair}",
+            "limit": "{open_rate}",
+            "amount": "{amount}",
+            "stake_amount": "{stake_amount}",
+            "enter_tag": "{enter_tag}"
+        },
+        "webhookexit": {
+            "strategy": "TournamentSpeedSniper5m",
+            "action": "SELL",
+            "pair": "{pair}",
+            "limit": "{close_rate}",
+            "amount": "{amount}",
+            "profit_percent": "{profit_percent}",
+            "exit_reason": "{exit_reason}"
+        }
+    },
+    "bot_name": "TournamentSpeedSniper",
+    "initial_state": "running",
+    "force_entry_enable": true
+}
